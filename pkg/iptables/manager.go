@@ -38,10 +38,11 @@ type ManagerInterface interface {
 
 // Manager 基于iptables-save/restore的管理器
 type Manager struct {
-	config        config.IPTablesConfig
-	mu            sync.RWMutex
-	rulesFilePath string
-	backupDir     string
+	config          config.IPTablesConfig
+	mu              sync.RWMutex
+	rulesFilePath   string
+	backupDir       string
+	templateManager *TemplateManager
 
 	// 当前管理的规则状态
 	managedRules map[string]*Rule // rule ID -> rule
@@ -55,11 +56,20 @@ func NewManager(cfg config.IPTablesConfig) ManagerInterface {
 		rulesDir = cfg.BackupPath
 	}
 
+	// 初始化模板管理器
+	templateManager, err := NewTemplateManager()
+	if err != nil {
+		logger.LogError(err, "初始化模板管理器失败", nil)
+		// 可以继续使用，但会回退到原来的字符串拼接方式
+		templateManager = nil
+	}
+
 	manager := &Manager{
-		config:        cfg,
-		rulesFilePath: filepath.Join(rulesDir, "rules.v4"),
-		backupDir:     filepath.Join(rulesDir, "backup"),
-		managedRules:  make(map[string]*Rule),
+		config:          cfg,
+		rulesFilePath:   filepath.Join(rulesDir, "rules.v4"),
+		backupDir:       filepath.Join(rulesDir, "backup"),
+		templateManager: templateManager,
+		managedRules:    make(map[string]*Rule),
 	}
 
 	// 确保目录存在
@@ -215,7 +225,10 @@ func (m *Manager) generateRulesContent(currentContent string, newRules map[strin
 	addedCount := m.addNewManagedRules(tables, newRules)
 
 	// 生成新的规则内容
-	newContent := m.generateIPTablesContent(tables)
+	newContent, err := m.generateIPTablesContent(tables)
+	if err != nil {
+		return "", fmt.Errorf("生成规则内容失败: %w", err)
+	}
 
 	log.WithFields(logrus.Fields{
 		"new_content_size": len(newContent),
@@ -386,14 +399,26 @@ func (m *Manager) addNewManagedRules(tables map[string]*IPTablesTable, newRules 
 		// 添加规则
 		for _, rule := range rules {
 			var ruleStr string
-			if rule.Action == "insert" {
-				ruleStr = fmt.Sprintf("-I %s %s", rule.Chain, rule.Rule)
-			} else {
-				ruleStr = fmt.Sprintf("-A %s %s", rule.Chain, rule.Rule)
+			var err error
+
+			// 使用模板生成规则字符串
+			if m.templateManager != nil {
+				ruleStr, err = m.templateManager.GenerateRule(rule)
+				if err != nil {
+					log.WithError(err).WithField("rule_id", rule.ID).Warn("使用模板生成规则失败，回退到字符串拼接")
+					ruleStr = ""
+				}
 			}
 
-			// 添加管理标记注释
-			ruleStr += fmt.Sprintf(" -m comment --comment \"NSPass:%s\"", rule.ID)
+			// 如果模板生成失败或没有模板管理器，使用原始方式
+			if ruleStr == "" {
+				if rule.Action == "insert" {
+					ruleStr = fmt.Sprintf("-I %s %s", rule.Chain, rule.Rule)
+				} else {
+					ruleStr = fmt.Sprintf("-A %s %s", rule.Chain, rule.Rule)
+				}
+				ruleStr += fmt.Sprintf(" -m comment --comment \"NSPass:%s\"", rule.ID)
+			}
 
 			table.Rules = append(table.Rules, ruleStr)
 			addedCount++
@@ -416,7 +441,13 @@ func (m *Manager) addNewManagedRules(tables map[string]*IPTablesTable, newRules 
 }
 
 // generateIPTablesContent 生成iptables-save格式的内容
-func (m *Manager) generateIPTablesContent(tables map[string]*IPTablesTable) string {
+func (m *Manager) generateIPTablesContent(tables map[string]*IPTablesTable) (string, error) {
+	// 如果有模板管理器，使用模板生成
+	if m.templateManager != nil {
+		return m.templateManager.GenerateIPTablesContent(tables, m.config.ChainPrefix)
+	}
+
+	// 回退到原始的字符串拼接方式
 	var content strings.Builder
 
 	// 按固定顺序输出表
@@ -452,7 +483,7 @@ func (m *Manager) generateIPTablesContent(tables map[string]*IPTablesTable) stri
 		content.WriteString("COMMIT\n")
 	}
 
-	return content.String()
+	return content.String(), nil
 }
 
 // applyRules 应用新规则
