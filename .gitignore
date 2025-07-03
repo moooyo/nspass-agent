@@ -34,6 +34,10 @@ build/
 # Generated proto files
 generated/
 
+# Binary files in root directory
+nspass-agent
+nspass-agent-*
+
 # Editor/IDE
 # .idea/
 # .vscode/
