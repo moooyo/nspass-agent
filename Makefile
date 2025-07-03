@@ -21,18 +21,23 @@ BINARY_NAME = nspass-agent
 OUTPUT_DIR = dist
 BINARY_PATH = $(OUTPUT_DIR)/$(BINARY_NAME)
 
+# Proto相关路径
+PROTO_DIR = proto
+GENERATED_DIR = generated
+PROTO_FILES = $(shell find $(PROTO_DIR) -name "*.proto")
+
 # 安装路径
 INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean test install uninstall deps lint format help
+.PHONY: all build clean test install uninstall deps lint format help proto-deps proto-gen proto-clean
 
 # 默认目标
-all: clean build
+all: proto-clean proto-gen build
 
 # 构建二进制文件
-build:
+build: proto-gen
 	@echo "构建 $(BINARY_NAME)..."
 	@mkdir -p $(OUTPUT_DIR)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
@@ -40,7 +45,7 @@ build:
 	@echo "构建完成: $(BINARY_PATH)"
 
 # 清理构建文件
-clean:
+clean: proto-clean
 	@echo "清理构建文件..."
 	@rm -rf $(OUTPUT_DIR)
 	@go clean
@@ -150,9 +155,56 @@ help:
 	@echo "  build-all  - 构建多架构版本"
 	@echo "  package    - 创建发布包"
 	@echo "  dev        - 开发模式运行"
+	@echo "  proto-deps - 安装proto工具依赖"
+	@echo "  proto-gen  - 生成proto代码"
+	@echo "  proto-clean- 清理生成的proto代码"
 	@echo "  help       - 显示此帮助信息"
 	@echo ""
 	@echo "环境变量："
 	@echo "  VERSION    - 版本号 (默认: git tag)"
 	@echo "  GOOS       - 目标操作系统 (默认: linux)"
-	@echo "  GOARCH     - 目标架构 (默认: amd64)" 
+	@echo "  GOARCH     - 目标架构 (默认: amd64)"
+
+# ===== Proto相关目标 =====
+
+# 安装proto工具依赖
+proto-deps:
+	@echo "安装proto工具依赖..."
+	@if ! command -v protoc >/dev/null 2>&1; then \
+		echo "错误: protoc未安装，请先安装Protocol Buffers"; \
+		echo "macOS: brew install protobuf"; \
+		echo "Ubuntu: apt-get install protobuf-compiler"; \
+		exit 1; \
+	fi
+	@if ! command -v protoc-gen-go >/dev/null 2>&1; then \
+		echo "安装protoc-gen-go..."; \
+		go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; \
+	fi
+	@if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then \
+		echo "安装protoc-gen-go-grpc..."; \
+		go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; \
+	fi
+	@echo "proto工具依赖安装完成！"
+
+# 清理生成的proto代码
+proto-clean:
+	@echo "清理生成的proto代码..."
+	@rm -rf $(GENERATED_DIR)
+
+# 生成proto代码
+proto-gen: proto-deps
+	@echo "生成proto代码..."
+	@mkdir -p $(GENERATED_DIR)
+	@export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
+	for proto in $(PROTO_FILES); do \
+		echo "处理: $$proto"; \
+		protoc \
+			--proto_path=$(PROTO_DIR) \
+			--proto_path=$(PROTO_DIR)/google/protobuf \
+			--go_out=$(GENERATED_DIR) \
+			--go_opt=paths=source_relative \
+			--go-grpc_out=$(GENERATED_DIR) \
+			--go-grpc_opt=paths=source_relative \
+			$$proto; \
+	done
+	@echo "proto代码生成完成！" 
