@@ -43,6 +43,9 @@ jobs:
       run: |
         echo "生成protobuf代码..."
         make proto-gen
+        
+        # 更新Go模块依赖，让Go识别新生成的包
+        go mod tidy
 
     - name: Build binaries
       run: |
