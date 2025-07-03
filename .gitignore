@@ -36,8 +36,47 @@ generated/
 
 # Binary files in root directory
 nspass-agent
+nspass-agent.exe
 nspass-agent-*
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS 生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.tmp/
+.temp/
+
+# 配置文件（包含敏感信息）
+config.local.yaml
+.env.local
+
+# 备份文件
+*.bak
+*.backup
+
+# 压缩文件
+*.tar.gz
+*.zip
+*.rar
+
+# 运行时文件
+*.pid

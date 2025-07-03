@@ -44,7 +44,7 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 	}
 
 	// 创建API客户端
-	apiClient := api.NewClient(cfg.API)
+	apiClient := api.NewClient(cfg.API, serverID)
 
 	// 创建proxy管理器
 	proxyManager := proxy.NewManager(cfg.Proxy)

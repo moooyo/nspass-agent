@@ -1,4 +1,8 @@
-# NSPass Agent 配置文件
+# NSPass Agent 主配置文件
+# 这是一个完整的配置示例，包含所有可用功能
+
+# 服务器ID（用于API鉴权）
+server_id: "your-server-id-here"
 
 # API配置
 api:
@@ -6,6 +10,9 @@ api:
   token: "your-api-token-here"
   timeout: 30
   retry_count: 3
+  retry_delay: 5
+  tls: true
+  tls_skip_verify: false
 
 # 代理软件配置
 proxy:
@@ -15,15 +22,31 @@ proxy:
   auto_start: true
   restart_on_fail: true
 
+  # 进程监控配置
+  monitor:
+    enable: true                # 是否启用进程监控
+    check_interval: 30         # 检查间隔（秒）
+    restart_cooldown: 60       # 重启冷却时间（秒）
+    max_restarts: 10           # 每小时最大重启次数
+    health_timeout: 5          # 健康检查超时（秒）
+
 # iptables配置
 iptables:
   enable: true
   backup_path: "/etc/nspass/iptables-backup"
-  persistent_method: "iptables-save"  # 或 "netfilter-persistent"
+  persistent_method: "iptables-save"
   chain_prefix: "NSPASS"
 
-# 更新间隔（秒）
-update_interval: 300
+# 日志配置
+logger:
+  level: "info"               # debug, info, warn, error
+  format: "json"              # json, text
+  output: "both"              # stdout, file, both
+  file: "/var/log/nspass/agent.log"
+  max_size: 100               # 单个日志文件最大大小（MB）
+  max_backups: 5              # 保留的日志文件数量
+  max_age: 30                 # 日志文件保留天数
+  compress: true              # 是否压缩旧日志文件
 
-# 日志级别
-log_level: "info" 
+# 更新间隔（秒）
+update_interval: 300 

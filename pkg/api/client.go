@@ -16,13 +16,15 @@ import (
 // Client API客户端
 type Client struct {
 	config     config.APIConfig
+	serverID   string
 	httpClient *http.Client
 }
 
 // NewClient 创建新的API客户端
-func NewClient(cfg config.APIConfig) *Client {
+func NewClient(cfg config.APIConfig, serverID string) *Client {
 	client := &Client{
-		config: cfg,
+		config:   cfg,
+		serverID: serverID,
 		httpClient: &http.Client{
 			Timeout: time.Duration(cfg.Timeout) * time.Second,
 		},
@@ -30,6 +32,7 @@ func NewClient(cfg config.APIConfig) *Client {
 
 	logger.LogStartup("api-client", "1.0", map[string]interface{}{
 		"base_url":    cfg.BaseURL,
+		"server_id":   serverID,
 		"timeout":     cfg.Timeout,
 		"retry_count": cfg.RetryCount,
 		"retry_delay": cfg.RetryDelay,
@@ -64,6 +67,13 @@ type IPTableRule struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// setAuthHeaders 设置鉴权Headers
+func (c *Client) setAuthHeaders(req *http.Request) {
+	req.Header.Set("X-Server-ID", c.serverID)
+	req.Header.Set("X-Token", c.config.Token)
+	req.Header.Set("Content-Type", "application/json")
+}
+
 // GetConfiguration 从API获取配置
 func (c *Client) GetConfiguration() (*Configuration, error) {
 	startTime := time.Now()
@@ -81,8 +91,7 @@ func (c *Client) GetConfiguration() (*Configuration, error) {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.config.Token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeaders(req)
 
 	var resp *http.Response
 	var lastErr error
@@ -195,8 +204,7 @@ func (c *Client) ReportStatus(status AgentStatus) error {
 		return fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.config.Token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -260,8 +268,7 @@ func (c *Client) GetServerConfig(serverID string) (*ServerConfigData, error) {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.config.Token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeaders(req)
 
 	var resp *http.Response
 	var lastErr error
@@ -410,8 +417,7 @@ func (c *Client) ReportAgentStatus(status AgentStatusReport) (*ServerConfigUpdat
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.config.Token)
-	req.Header.Set("Content-Type", "application/json")
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -78,54 +78,99 @@ proxy:
 
 ## 🚀 快速开始
 
-### 1. 下载和安装
+### 1. 自动安装（推荐）
 ```bash
-# 下载最新版本
-wget https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz
+# 使用 curl 一键安装
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
 
-# 解压安装
-tar -xzf nspass-agent-linux-amd64.tar.gz
-sudo ./install.sh
+# 或使用 wget
+wget -qO- https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
 ```
 
-### 2. 配置文件
-创建配置文件 `/etc/nspass/config.yaml`:
+### 2. 配置服务
+编辑主配置文件：
+```bash
+sudo nano /etc/nspass/config.yaml
+```
+
+配置示例：
 ```yaml
-# API配置
+# 服务器标识
+server_id: "your-server-id-here"
+
+# API 配置
 api:
-  base_url: "https://your-api-server.com"
-  token: "your-api-token"
+  base_url: "https://api.nspass.com"
+  token: "your-api-token-here"
 
 # 代理配置
 proxy:
   enabled_types: ["shadowsocks", "trojan", "snell"]
   auto_start: true
   
-  # 监控配置
+  # 进程监控
   monitor:
     enable: true
     check_interval: 30
     max_restarts: 10
 
-# 日志配置  
+# 防火墙管理
+iptables:
+  enable: true
+  chain_prefix: "NSPASS"
+
+# 日志配置
 logger:
   level: "info"
   format: "json"
   output: "both"
-  file: "/var/log/nspass/agent.log"
 ```
 
 ### 3. 启动服务
 ```bash
-# 启动服务
+# 启动并启用服务
 sudo systemctl start nspass-agent
 sudo systemctl enable nspass-agent
 
-# 查看状态
+# 查看服务状态
 sudo systemctl status nspass-agent
 
 # 查看日志
 sudo journalctl -u nspass-agent -f
+```
+
+## 📁 配置文件
+
+项目提供了精简的配置文件：
+
+- **`configs/config.yaml`** - 主配置文件，包含所有功能的完整配置
+- **`configs/config-with-monitor.yaml`** - 包含详细监控配置的示例
+
+## 🔧 本地开发
+
+### 构建项目
+```bash
+# 克隆项目
+git clone https://github.com/nspass/nspass-agent.git
+cd nspass-agent
+
+# 安装依赖
+make deps
+
+# 构建项目
+make build
+
+# 运行测试
+make test
+```
+
+### 清理项目
+```bash
+# 基础清理
+make clean
+
+# 深度清理（包括生成代码和缓存）
+make deep-clean
 ```
 
 ## 📖 详细文档
@@ -157,30 +202,6 @@ proxy:
     check_interval: 60      # 稳定优先
     restart_cooldown: 120   # 保守策略
     max_restarts: 5         # 严格限制
-```
-
-## 🔧 构建和开发
-
-### 本地构建
-```bash
-# 克隆仓库
-git clone https://github.com/nspass/nspass-agent.git
-cd nspass-agent
-
-# 安装依赖
-go mod tidy
-
-# 构建
-make build
-
-# 运行测试
-make test
-```
-
-### 开发环境运行
-```bash
-# 使用测试配置运行
-go run cmd/nspass-agent/main.go -c test/test-monitor-config.yaml --log-level=debug
 ```
 
 ## 📊 监控和维护

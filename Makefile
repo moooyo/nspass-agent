@@ -31,7 +31,7 @@ INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean test install uninstall deps lint format help proto-deps proto-gen proto-clean
+.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean
 
 # 默认目标
 all: proto-clean proto-gen build
@@ -45,10 +45,20 @@ build: proto-gen
 	@echo "构建完成: $(BINARY_PATH)"
 
 # 清理构建文件
-clean: proto-clean
+clean:
 	@echo "清理构建文件..."
 	@rm -rf $(OUTPUT_DIR)
+	@rm -f $(BINARY_NAME)
 	@go clean
+
+# 深度清理（包括生成的代码和缓存）
+deep-clean: clean proto-clean
+	@echo "深度清理项目..."
+	@rm -rf build/
+	@rm -rf dist/
+	@rm -rf $(GENERATED_DIR)
+	@go clean -cache
+	@go clean -modcache
 
 # 运行测试
 test:
@@ -77,119 +87,21 @@ format:
 	@go fmt ./...
 	@go vet ./...
 
-# 安装到系统
-install: build
-	@echo "安装 $(BINARY_NAME) 到系统..."
-	@sudo cp $(BINARY_PATH) $(INSTALL_PATH)/
-	@sudo chmod +x $(INSTALL_PATH)/$(BINARY_NAME)
-	
-	@echo "创建配置目录..."
-	@sudo mkdir -p $(CONFIG_PATH)
-	@sudo mkdir -p $(CONFIG_PATH)/proxy
-	@sudo cp configs/config.yaml $(CONFIG_PATH)/config.yaml.example
-	
-	@echo "安装systemd服务..."
-	@sudo cp systemd/nspass-agent.service $(SYSTEMD_PATH)/
-	@sudo systemctl daemon-reload
-	
-	@echo "安装完成！"
-	@echo "请配置 $(CONFIG_PATH)/config.yaml 后启动服务："
-	@echo "  sudo systemctl enable nspass-agent"
-	@echo "  sudo systemctl start nspass-agent"
-
-# 从系统卸载
-uninstall:
-	@echo "卸载 $(BINARY_NAME)..."
-	@sudo systemctl stop nspass-agent 2>/dev/null || true
-	@sudo systemctl disable nspass-agent 2>/dev/null || true
-	@sudo rm -f $(SYSTEMD_PATH)/nspass-agent.service
-	@sudo rm -f $(INSTALL_PATH)/$(BINARY_NAME)
-	@sudo systemctl daemon-reload
-	@echo "卸载完成！"
-	@echo "注意：配置文件保留在 $(CONFIG_PATH)/ 中"
-
-# 构建多架构版本
-build-all:
-	@echo "构建多架构版本..."
-	@mkdir -p $(OUTPUT_DIR)
-	
-	@echo "构建 linux/amd64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-		go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/$(BINARY_NAME)
-	
-	@echo "构建 linux/arm64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-		go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/$(BINARY_NAME)
-	
-	@echo "构建 linux/386..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=386 \
-		go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/$(BINARY_NAME)-linux-386 ./cmd/$(BINARY_NAME)
-
-# 创建发布包
-package: build-all
-	@echo "创建发布包..."
-	@cd $(OUTPUT_DIR) && \
-		for binary in $(BINARY_NAME)-*; do \
-			tar -czf $$binary.tar.gz $$binary; \
-		done
-	@echo "发布包创建完成！"
-
-# 开发模式运行
-dev:
-	@echo "开发模式运行..."
-	@go run ./cmd/$(BINARY_NAME) --config configs/config.yaml --log-level debug
-
-# 显示帮助信息
-help:
-	@echo "NSPass Agent 构建系统"
-	@echo ""
-	@echo "可用目标："
-	@echo "  build      - 构建二进制文件"
-	@echo "  clean      - 清理构建文件"
-	@echo "  test       - 运行测试"
-	@echo "  deps       - 安装依赖"
-	@echo "  lint       - 代码检查"
-	@echo "  format     - 格式化代码"
-	@echo "  install    - 安装到系统"
-	@echo "  uninstall  - 从系统卸载"
-	@echo "  build-all  - 构建多架构版本"
-	@echo "  package    - 创建发布包"
-	@echo "  dev        - 开发模式运行"
-	@echo "  proto-deps - 安装proto工具依赖"
-	@echo "  proto-gen  - 生成proto代码"
-	@echo "  proto-clean- 清理生成的proto代码"
-	@echo "  help       - 显示此帮助信息"
-	@echo ""
-	@echo "环境变量："
-	@echo "  VERSION    - 版本号 (默认: git tag)"
-	@echo "  GOOS       - 目标操作系统 (默认: linux)"
-	@echo "  GOARCH     - 目标架构 (默认: amd64)"
-
-# ===== Proto相关目标 =====
-
-# 安装proto工具依赖
+# 安装proto依赖
 proto-deps:
-	@echo "安装proto工具依赖..."
+	@echo "检查proto依赖..."
 	@if ! command -v protoc >/dev/null 2>&1; then \
-		echo "错误: protoc未安装，请先安装Protocol Buffers"; \
-		echo "macOS: brew install protobuf"; \
-		echo "Ubuntu: apt-get install protobuf-compiler"; \
+		echo "错误: 请先安装 protoc"; \
 		exit 1; \
 	fi
 	@if ! command -v protoc-gen-go >/dev/null 2>&1; then \
-		echo "安装protoc-gen-go..."; \
+		echo "安装 protoc-gen-go..."; \
 		go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; \
 	fi
 	@if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then \
-		echo "安装protoc-gen-go-grpc..."; \
+		echo "安装 protoc-gen-go-grpc..."; \
 		go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; \
 	fi
-	@echo "proto工具依赖安装完成！"
-
-# 清理生成的proto代码
-proto-clean:
-	@echo "清理生成的proto代码..."
-	@rm -rf $(GENERATED_DIR)
 
 # 生成proto代码
 proto-gen: proto-deps
@@ -207,4 +119,67 @@ proto-gen: proto-deps
 			--go-grpc_opt=paths=source_relative \
 			$$proto; \
 	done
-	@echo "proto代码生成完成！" 
+	@echo "proto代码生成完成！"
+
+# 清理proto生成的代码
+proto-clean:
+	@echo "清理proto生成的代码..."
+	@rm -rf $(GENERATED_DIR)
+
+# 多平台构建
+build-all: proto-gen
+	@echo "构建所有平台版本..."
+	@mkdir -p $(OUTPUT_DIR)
+	@for os in linux darwin windows; do \
+		for arch in amd64 arm64; do \
+			echo "构建 $$os/$$arch..."; \
+			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+				go build -ldflags "$(LDFLAGS)" \
+				-o $(OUTPUT_DIR)/$(BINARY_NAME)-$$os-$$arch ./cmd/$(BINARY_NAME); \
+		done; \
+	done
+	@echo "所有平台构建完成！"
+
+# 安装到系统
+install: build
+	@echo "安装到系统..."
+	@sudo cp $(BINARY_PATH) $(INSTALL_PATH)/
+	@sudo chmod +x $(INSTALL_PATH)/$(BINARY_NAME)
+	@echo "安装完成"
+
+# 从系统卸载
+uninstall:
+	@echo "从系统卸载..."
+	@sudo rm -f $(INSTALL_PATH)/$(BINARY_NAME)
+	@echo "卸载完成"
+
+# 显示帮助信息
+help:
+	@echo "NSPass Agent Makefile 使用说明："
+	@echo ""
+	@echo "构建相关："
+	@echo "  build        构建二进制文件"
+	@echo "  build-all    构建所有平台版本"
+	@echo "  all          清理并重新构建（默认）"
+	@echo ""
+	@echo "清理相关："
+	@echo "  clean        清理构建文件"
+	@echo "  deep-clean   深度清理（包括生成代码和缓存）"
+	@echo "  proto-clean  清理proto生成的代码"
+	@echo ""
+	@echo "开发相关："
+	@echo "  test         运行测试"
+	@echo "  lint         代码检查"
+	@echo "  format       格式化代码"
+	@echo "  deps         安装依赖"
+	@echo ""
+	@echo "Proto相关："
+	@echo "  proto-deps   安装proto依赖"
+	@echo "  proto-gen    生成proto代码"
+	@echo ""
+	@echo "系统相关："
+	@echo "  install      安装到系统"
+	@echo "  uninstall    从系统卸载"
+	@echo ""
+	@echo "其他："
+	@echo "  help         显示此帮助信息" 
