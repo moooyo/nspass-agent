@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -10,6 +11,7 @@ import (
 
 // Config 主配置结构
 type Config struct {
+	ServerID       string         `yaml:"server_id" json:"server_id"` // 服务器ID
 	API            APIConfig      `yaml:"api" json:"api"`
 	Proxy          ProxyConfig    `yaml:"proxy" json:"proxy"`
 	IPTables       IPTablesConfig `yaml:"iptables" json:"iptables"`
@@ -20,11 +22,13 @@ type Config struct {
 
 // APIConfig API配置
 type APIConfig struct {
-	BaseURL    string `yaml:"base_url" json:"base_url"`
-	Token      string `yaml:"token" json:"token"`
-	Timeout    int    `yaml:"timeout" json:"timeout"` // 秒
-	RetryCount int    `yaml:"retry_count" json:"retry_count"`
-	RetryDelay int    `yaml:"retry_delay" json:"retry_delay"`
+	BaseURL       string `yaml:"base_url" json:"base_url"`
+	Token         string `yaml:"token" json:"token"`
+	Timeout       int    `yaml:"timeout" json:"timeout"` // 秒
+	RetryCount    int    `yaml:"retry_count" json:"retry_count"`
+	RetryDelay    int    `yaml:"retry_delay" json:"retry_delay"`
+	TLS           bool   `yaml:"tls" json:"tls"`                         // 是否启用TLS
+	TLSSkipVerify bool   `yaml:"tls_skip_verify" json:"tls_skip_verify"` // 是否跳过TLS证书验证
 }
 
 // ProxyConfig 代理配置
@@ -166,7 +170,18 @@ func setDefaults(config *Config) {
 
 // Validate 验证配置的有效性
 func (c *Config) Validate() error {
-	// 这里可以添加配置验证逻辑
+	if c.ServerID == "" {
+		return fmt.Errorf("server_id不能为空")
+	}
+
+	if c.API.BaseURL == "" {
+		return fmt.Errorf("API base_url不能为空")
+	}
+
+	if c.UpdateInterval <= 0 {
+		return fmt.Errorf("update_interval必须大于0")
+	}
+
 	return nil
 }
 
