@@ -1,0 +1,34 @@
+# 测试配置文件 - 包含监控功能
+api:
+  base_url: "https://api.example.com"
+  token: "test-token"
+  timeout: 10
+  retry_count: 2
+  retry_delay: 3
+
+proxy:
+  bin_path: "/tmp/nspass/bin"
+  config_path: "/tmp/nspass/config"
+  enabled_types: []
+  auto_start: false
+  restart_on_fail: false
+  
+  # 监控配置 - 测试环境设置
+  monitor:
+    enable: true          # 启用监控
+    check_interval: 5     # 5秒检查一次（快速测试）
+    restart_cooldown: 10  # 10秒冷却期
+    max_restarts: 5       # 每小时最多5次重启
+    health_timeout: 3     # 3秒超时
+
+iptables:
+  enable: false
+  chain_prefix: "TEST_"
+  backup_path: "/tmp/nspass/backup"
+
+logger:
+  level: "debug"
+  format: "text"
+  output: "stdout"
+
+update_interval: 30 

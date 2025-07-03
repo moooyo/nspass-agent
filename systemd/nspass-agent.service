@@ -1,0 +1,36 @@
+[Unit]
+Description=NSPass Agent - 代理服务管理Agent
+Documentation=https://github.com/nspass/nspass-agent
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/nspass-agent --config /etc/nspass/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=5s
+
+# 安全设置
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=true
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=65536
+
+# 环境变量
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nspass-agent
+
+[Install]
+WantedBy=multi-user.target 

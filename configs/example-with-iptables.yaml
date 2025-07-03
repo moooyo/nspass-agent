@@ -1,0 +1,76 @@
+# NSPass Agent 配置示例 - 带有IPTables配置
+
+# API通信配置
+api:
+  base_url: "https://api.nspass.example.com"
+  token: "your-api-token-here"
+  timeout: 30
+  retry_count: 3
+  retry_delay: 5
+
+# 代理软件配置
+proxy:
+  enabled: true
+  install_dir: "/opt/nspass"
+  config_dir: "/etc/nspass/proxy"
+  supported_types:
+    - "shadowsocks"
+    - "trojan"
+    - "snell"
+
+# IPTables防火墙配置
+iptables:
+  enable: true
+  chain_prefix: "NSPASS_"
+  backup_path: "/etc/nspass/iptables/backup"
+
+# 日志配置
+logger:
+  # 日志级别: debug, info, warn, error
+  level: "info"
+  
+  # 日志格式: json, text
+  format: "json"
+  
+  # 输出方式: stdout, file, both
+  output: "both"
+  
+  # 日志文件路径（当output为file或both时使用）
+  file: "/var/log/nspass/agent.log"
+  
+  # 单个日志文件最大大小(MB)
+  max_size: 100
+  
+  # 保留的旧日志文件数量
+  max_backups: 5
+  
+  # 日志文件保留天数
+  max_age: 30
+  
+  # 是否压缩旧日志文件
+  compress: true
+
+# 系统配置
+system:
+  service_name: "nspass-agent"
+  pid_file: "/var/run/nspass-agent.pid"
+  log_level: "info"
+  log_format: "json"
+
+# 更新间隔配置
+update_interval: 300  # API同步间隔（秒）
+
+# 示例iptables规则配置（这些规则通常从API获取）
+# rules:
+#   - id: "allow_ssh"
+#     table: "filter"
+#     chain: "INPUT"
+#     rule: "-p tcp --dport 22 -j ACCEPT"
+#     action: "add"
+#     enabled: true
+#   - id: "nat_masquerade"
+#     table: "nat"
+#     chain: "POSTROUTING"
+#     rule: "-s 192.168.0.0/16 -j MASQUERADE"
+#     action: "add"
+#     enabled: true 

@@ -1,0 +1,29 @@
+# NSPass Agent 配置文件
+
+# API配置
+api:
+  base_url: "https://api.nspass.com"
+  token: "your-api-token-here"
+  timeout: 30
+  retry_count: 3
+
+# 代理软件配置
+proxy:
+  bin_path: "/usr/local/bin"
+  config_path: "/etc/nspass/proxy"
+  enabled_types: ["shadowsocks", "trojan", "snell"]
+  auto_start: true
+  restart_on_fail: true
+
+# iptables配置
+iptables:
+  enable: true
+  backup_path: "/etc/nspass/iptables-backup"
+  persistent_method: "iptables-save"  # 或 "netfilter-persistent"
+  chain_prefix: "NSPASS"
+
+# 更新间隔（秒）
+update_interval: 300
+
+# 日志级别
+log_level: "info" 
