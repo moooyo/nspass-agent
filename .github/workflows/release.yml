@@ -44,8 +44,17 @@ jobs:
         echo "生成protobuf代码..."
         make proto-gen
         
+        # 验证生成的代码
+        echo "验证生成的代码结构..."
+        ls -la generated/
+        ls -la generated/model/
+        
         # 更新Go模块依赖，让Go识别新生成的包
         go mod tidy
+        
+        # 验证模块依赖
+        echo "验证Go模块状态..."
+        go list -m all | grep nspass-agent
 
     - name: Build binaries
       run: |

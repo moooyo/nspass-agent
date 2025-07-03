@@ -28,3 +28,6 @@ require (
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a // indirect
 )
+
+// 使用本地生成的protobuf代码，而不是从远程拉取
+replace github.com/nspass/nspass-agent/generated => ./generated
