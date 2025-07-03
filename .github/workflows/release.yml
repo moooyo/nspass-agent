@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 匹配 v1.0.0, v2.1.3 等版本标签
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整的git历史，用于git describe
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'  # 使用项目要求的Go版本
+
+    - name: Get version
+      id: get_version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Build binaries
+      run: |
+        mkdir -p dist
+        
+        # 设置版本信息
+        VERSION=${{ steps.get_version.outputs.VERSION }}
+        COMMIT=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        
+        LDFLAGS="-w -s -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildTime=${BUILD_TIME}'"
+        
+        # 构建不同平台的二进制文件
+        platforms=(
+          "linux/amd64"
+          "linux/arm64" 
+          "linux/386"
+          "linux/arm"
+          "darwin/amd64"
+          "darwin/arm64"
+          "windows/amd64"
+          "windows/386"
+        )
+        
+        for platform in "${platforms[@]}"; do
+          GOOS=${platform%/*}
+          GOARCH=${platform#*/}
+          
+          # Windows平台需要.exe后缀
+          if [ "$GOOS" = "windows" ]; then
+            output_name="nspass-agent-${GOOS}-${GOARCH}.exe"
+          else
+            output_name="nspass-agent-${GOOS}-${GOARCH}"
+          fi
+          
+          echo "Building for $GOOS/$GOARCH..."
+          CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+            go build -ldflags "$LDFLAGS" -o "dist/$output_name" ./cmd/nspass-agent
+        done
+        
+        # 创建压缩包
+        cd dist
+        for binary in nspass-agent-*; do
+          if [[ "$binary" == *.exe ]]; then
+            # Windows文件使用zip
+            zip "${binary%.*}.zip" "$binary"
+          else
+            # 其他平台使用tar.gz
+            tar -czf "${binary}.tar.gz" "$binary"
+          fi
+        done
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # 获取上一个tag
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        CURRENT_TAG=${{ steps.get_version.outputs.VERSION }}
+        
+        echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+        echo "## 更新内容" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        
+        if [ -n "$PREVIOUS_TAG" ]; then
+          echo "### 自 $PREVIOUS_TAG 以来的变更:" >> $GITHUB_OUTPUT
+          git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> $GITHUB_OUTPUT
+        else
+          echo "### 初始版本发布" >> $GITHUB_OUTPUT
+          git log --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "" >> $GITHUB_OUTPUT
+        echo "## 支持的平台" >> $GITHUB_OUTPUT
+        echo "- Linux (amd64, arm64, 386, arm)" >> $GITHUB_OUTPUT
+        echo "- macOS (amd64, arm64)" >> $GITHUB_OUTPUT  
+        echo "- Windows (amd64, 386)" >> $GITHUB_OUTPUT
+        echo "" >> $GITHUB_OUTPUT
+        echo "## 安装说明" >> $GITHUB_OUTPUT
+        echo "1. 下载对应平台的二进制文件" >> $GITHUB_OUTPUT
+        echo "2. 解压文件: \`tar -xzf nspass-agent-*.tar.gz\` (Linux/macOS) 或解压zip文件 (Windows)" >> $GITHUB_OUTPUT
+        echo "3. 将二进制文件移动到PATH目录中" >> $GITHUB_OUTPUT
+        echo "4. 参考文档配置和使用" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Generate checksums
+      run: |
+        # 生成校验和文件
+        cd dist
+        sha256sum *.tar.gz *.zip > checksums.txt
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        name: Release ${{ steps.get_version.outputs.VERSION }}
+        body: ${{ steps.changelog.outputs.CHANGELOG }}
+        draft: false
+        prerelease: false
+        files: |
+          dist/*.tar.gz
+          dist/*.zip
+          dist/checksums.txt
+        token: ${{ secrets.GITHUB_TOKEN }} 
