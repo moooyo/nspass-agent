@@ -6,10 +6,11 @@
 set -e
 
 # 版本信息
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 GITHUB_REPO="nspass/nspass-agent"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/nspass"
+LOG_DIR="/var/log/nspass"
 SERVICE_NAME="nspass-agent"
 
 # 颜色输出
@@ -66,6 +67,12 @@ check_installation() {
     # 检查配置目录
     if [ -d "$CONFIG_DIR" ]; then
         print_info "发现配置目录: $CONFIG_DIR"
+        found=true
+    fi
+    
+    # 检查日志目录
+    if [ -d "$LOG_DIR" ]; then
+        print_info "发现日志目录: $LOG_DIR"
         found=true
     fi
     
@@ -173,33 +180,70 @@ remove_binary() {
 
 # 询问并处理配置文件
 handle_config_files() {
-    if [ ! -d "$CONFIG_DIR" ]; then
-        print_info "配置目录不存在，跳过"
+    local config_exists=false
+    local log_exists=false
+    
+    # 检查配置目录
+    if [ -d "$CONFIG_DIR" ]; then
+        config_exists=true
+    fi
+    
+    # 检查日志目录
+    if [ -d "$LOG_DIR" ]; then
+        log_exists=true
+    fi
+    
+    if [ "$config_exists" = false ] && [ "$log_exists" = false ]; then
+        print_info "配置和日志目录不存在，跳过"
         return
     fi
     
     echo ""
     print_step "处理配置文件和数据..."
-    echo ""
-    echo "配置目录: $CONFIG_DIR"
-    echo "包含内容:"
-    if [ -d "$CONFIG_DIR" ]; then
-        ls -la "$CONFIG_DIR" 2>/dev/null | sed 's/^/  /' || echo "  (无法列出内容)"
+    
+    if [ "$config_exists" = true ]; then
+        echo ""
+        echo "配置目录: $CONFIG_DIR"
+        echo "包含内容:"
+        if [ -d "$CONFIG_DIR" ]; then
+            ls -la "$CONFIG_DIR" 2>/dev/null | sed 's/^/  /' || echo "  (无法列出内容)"
+        fi
     fi
+    
+    if [ "$log_exists" = true ]; then
+        echo ""
+        echo "日志目录: $LOG_DIR"
+        echo "包含内容:"
+        if [ -d "$LOG_DIR" ]; then
+            ls -la "$LOG_DIR" 2>/dev/null | sed 's/^/  /' || echo "  (无法列出内容)"
+        fi
+    fi
+    
     echo ""
     
     while true; do
-        read -p "是否删除配置文件和数据？ [y/N]: " -n 1 -r
+        read -p "是否删除配置文件和日志数据？ [y/N]: " -n 1 -r
         echo ""
         case $REPLY in
             [Yy])
                 print_info "删除配置文件和数据..."
-                rm -rf "$CONFIG_DIR"
-                print_info "配置目录已删除: $CONFIG_DIR"
+                if [ "$config_exists" = true ]; then
+                    rm -rf "$CONFIG_DIR"
+                    print_info "配置目录已删除: $CONFIG_DIR"
+                fi
+                if [ "$log_exists" = true ]; then
+                    rm -rf "$LOG_DIR"
+                    print_info "日志目录已删除: $LOG_DIR"
+                fi
                 break
                 ;;
             [Nn]|"")
-                print_info "保留配置文件: $CONFIG_DIR"
+                if [ "$config_exists" = true ]; then
+                    print_info "保留配置文件: $CONFIG_DIR"
+                fi
+                if [ "$log_exists" = true ]; then
+                    print_info "保留日志文件: $LOG_DIR"
+                fi
                 break
                 ;;
             *)
@@ -365,9 +409,12 @@ check_residual_files() {
     # 检查可能的残留文件
     local residual_paths=(
         "/tmp/nspass*"
-        "/var/log/nspass*"
-        "/var/run/nspass*"
+        "/var/tmp/nspass*"
         "/run/nspass*"
+        "/var/run/nspass*"
+        "/var/cache/nspass*"
+        "/home/*/nspass*"
+        "/root/nspass*"
     )
     
     for path in "${residual_paths[@]}"; do
@@ -377,11 +424,23 @@ check_residual_files() {
         fi
     done
     
+    # 检查cron作业
+    if crontab -l 2>/dev/null | grep -q nspass; then
+        print_warn "发现cron作业中包含nspass相关内容"
+        found_residual=true
+    fi
+    
     if [ "$found_residual" = false ]; then
         print_info "未发现残留文件和进程"
     else
         echo ""
         print_warn "建议手动检查和清理上述残留项"
+        echo ""
+        echo "清理建议:"
+        echo "  - 检查和停止相关进程"
+        echo "  - 清理临时文件"
+        echo "  - 检查cron作业"
+        echo "  - 重启系统以确保清理完成"
     fi
 }
 

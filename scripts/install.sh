@@ -1,16 +1,24 @@
 #!/bin/bash
 
 # NSPass Agent 安装/升级脚本
-# 使用方法: curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
+# 使用方法: 
+#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
+#   或
+#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token
 
 set -e
 
 # 版本信息
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 GITHUB_REPO="nspass/nspass-agent"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/nspass"
+LOG_DIR="/var/log/nspass"
 SERVICE_NAME="nspass-agent"
+
+# 配置参数
+SERVER_ID=""
+API_TOKEN=""
 
 # 颜色输出
 RED='\033[0;31m'
@@ -34,6 +42,68 @@ print_error() {
 
 print_step() {
     echo -e "${BLUE}[STEP]${NC} $1"
+}
+
+# 显示帮助信息
+show_help() {
+    echo "NSPass Agent 安装脚本 v$SCRIPT_VERSION"
+    echo ""
+    echo "使用方法:"
+    echo "  $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  --server-id=<id>     设置服务器ID"
+    echo "  --token=<token>      设置API令牌"
+    echo "  --help               显示此帮助信息"
+    echo ""
+    echo "示例:"
+    echo "  $0 --server-id=server001 --token=your-api-token"
+    echo ""
+    echo "远程安装:"
+    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token"
+    echo ""
+}
+
+# 解析命令行参数
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --server-id=*)
+                SERVER_ID="${1#*=}"
+                shift
+                ;;
+            --token=*)
+                API_TOKEN="${1#*=}"
+                shift
+                ;;
+            --help)
+                show_help
+                exit 0
+                ;;
+            *)
+                print_error "未知参数: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# 验证参数
+validate_args() {
+    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+        print_info "使用提供的配置参数:"
+        print_info "  服务器ID: $SERVER_ID"
+        print_info "  API令牌: ${API_TOKEN:0:10}..."
+        return 0
+    elif [ -n "$SERVER_ID" ] || [ -n "$API_TOKEN" ]; then
+        print_error "server-id 和 token 参数必须同时提供"
+        show_help
+        exit 1
+    else
+        print_warn "未提供配置参数，将使用默认配置"
+        return 0
+    fi
 }
 
 # 检查是否以root用户运行
@@ -115,20 +185,27 @@ get_latest_version() {
     
     # 方法1: 使用GitHub API
     if command -v curl >/dev/null 2>&1; then
-        LATEST_VERSION=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        local api_response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null)
+        if [ $? -eq 0 ] && echo "$api_response" | grep -q "tag_name"; then
+            LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        fi
     fi
     
     # 方法2: 如果curl失败，尝试wget
     if [ -z "$LATEST_VERSION" ] && command -v wget >/dev/null 2>&1; then
-        LATEST_VERSION=$(wget -qO- "https://api.github.com/repos/$GITHUB_REPO/releases/latest" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        local api_response=$(wget -qO- "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null)
+        if [ $? -eq 0 ] && echo "$api_response" | grep -q "tag_name"; then
+            LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        fi
     fi
     
+    # 方法3: 如果API失败，使用默认版本（开发阶段）
     if [ -z "$LATEST_VERSION" ]; then
-        print_error "无法获取最新版本信息，请检查网络连接"
-        exit 1
+        print_warn "无法从GitHub API获取版本信息，使用默认版本"
+        LATEST_VERSION="v1.0.0"
     fi
     
-    print_info "最新版本: $LATEST_VERSION"
+    print_info "目标版本: $LATEST_VERSION"
 }
 
 # 版本比较函数
@@ -237,7 +314,7 @@ download_and_install() {
     print_step "下载nspass-agent $LATEST_VERSION..."
     
     # 构建下载URL
-    local filename="nspass-agent-linux-$ARCH.tar.gz"
+    local filename="nspass-agent-linux-$ARCH"
     local download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/$filename"
     local temp_dir=$(mktemp -d)
     local temp_file="$temp_dir/$filename"
@@ -245,52 +322,79 @@ download_and_install() {
     print_info "下载URL: $download_url"
     
     # 下载文件
+    local download_success=false
     if command -v curl >/dev/null 2>&1; then
-        if ! curl -L -o "$temp_file" "$download_url"; then
-            print_error "下载失败: $download_url"
-            rm -rf "$temp_dir"
-            exit 1
+        if curl -L -o "$temp_file" "$download_url" 2>/dev/null; then
+            download_success=true
         fi
     elif command -v wget >/dev/null 2>&1; then
-        if ! wget -O "$temp_file" "$download_url"; then
-            print_error "下载失败: $download_url"
-            rm -rf "$temp_dir"
-            exit 1
+        if wget -O "$temp_file" "$download_url" 2>/dev/null; then
+            download_success=true
         fi
-    else
-        print_error "需要curl或wget来下载文件"
+    fi
+    
+    # 如果下载失败，尝试tar.gz格式
+    if [ "$download_success" = false ]; then
+        print_warn "直接下载失败，尝试tar.gz格式..."
+        filename="nspass-agent-linux-$ARCH.tar.gz"
+        download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/$filename"
+        temp_file="$temp_dir/$filename"
+        
+        if command -v curl >/dev/null 2>&1; then
+            if curl -L -o "$temp_file" "$download_url" 2>/dev/null; then
+                download_success=true
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -O "$temp_file" "$download_url" 2>/dev/null; then
+                download_success=true
+            fi
+        fi
+        
+        if [ "$download_success" = true ]; then
+            print_info "正在解压文件..."
+            cd "$temp_dir"
+            if tar -xzf "$filename" 2>/dev/null; then
+                # 查找二进制文件
+                local binary_file=""
+                for file in nspass-agent nspass-agent-linux-$ARCH nspass-agent-$ARCH; do
+                    if [ -f "$file" ]; then
+                        binary_file="$file"
+                        break
+                    fi
+                done
+                
+                if [ -n "$binary_file" ]; then
+                    temp_file="$temp_dir/$binary_file"
+                else
+                    print_error "未找到二进制文件"
+                    rm -rf "$temp_dir"
+                    exit 1
+                fi
+            else
+                print_error "解压失败"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+        fi
+    fi
+    
+    if [ "$download_success" = false ]; then
+        print_error "下载失败，请检查网络连接或版本是否存在"
+        print_error "尝试的URL: $download_url"
         rm -rf "$temp_dir"
         exit 1
     fi
     
-    # 解压文件
-    print_info "解压文件..."
-    cd "$temp_dir"
-    if ! tar -xzf "$filename"; then
-        print_error "解压失败"
-        rm -rf "$temp_dir"
-        exit 1
-    fi
-    
-    # 查找二进制文件
-    local binary_file=""
-    for file in nspass-agent nspass-agent-linux-$ARCH nspass-agent-$ARCH; do
-        if [ -f "$file" ]; then
-            binary_file="$file"
-            break
-        fi
-    done
-    
-    if [ -z "$binary_file" ]; then
-        print_error "未找到二进制文件"
-        ls -la
+    # 检查下载的文件
+    if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
+        print_error "下载的文件不存在或为空"
         rm -rf "$temp_dir"
         exit 1
     fi
     
     # 安装二进制文件
     print_info "安装二进制文件..."
-    cp "$binary_file" "$INSTALL_DIR/nspass-agent"
+    cp "$temp_file" "$INSTALL_DIR/nspass-agent"
     chmod +x "$INSTALL_DIR/nspass-agent"
     
     # 验证安装
@@ -314,19 +418,38 @@ setup_config() {
     mkdir -p "$CONFIG_DIR"
     mkdir -p "$CONFIG_DIR/proxy"
     mkdir -p "$CONFIG_DIR/iptables-backup"
+    mkdir -p "$LOG_DIR"
+    
+    # 确定配置参数
+    local config_server_id="your-server-id-here"
+    local config_api_token="your-api-token-here"
+    local config_created=false
+    
+    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+        config_server_id="$SERVER_ID"
+        config_api_token="$API_TOKEN"
+        print_info "使用提供的配置参数"
+    fi
     
     # 如果配置文件不存在，创建默认配置
     if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
-        print_info "创建默认配置文件..."
-        cat > "$CONFIG_DIR/config.yaml" << 'EOF'
+        print_info "创建配置文件..."
+        cat > "$CONFIG_DIR/config.yaml" << EOF
 # NSPass Agent 配置文件
+# 请根据实际需要修改以下配置
+
+# 服务器ID（必须设置）
+server_id: "$config_server_id"
 
 # API配置
 api:
   base_url: "https://api.nspass.com"
-  token: "your-api-token-here"
+  token: "$config_api_token"
   timeout: 30
   retry_count: 3
+  retry_delay: 5
+  tls: true
+  tls_skip_verify: false
 
 # 代理软件配置
 proxy:
@@ -336,6 +459,14 @@ proxy:
   auto_start: true
   restart_on_fail: true
 
+  # 进程监控配置
+  monitor:
+    enable: true
+    check_interval: 30
+    restart_cooldown: 60
+    max_restarts: 10
+    health_timeout: 5
+
 # iptables配置
 iptables:
   enable: true
@@ -343,21 +474,94 @@ iptables:
   persistent_method: "iptables-save"
   chain_prefix: "NSPASS"
 
+# 日志配置
+logger:
+  level: "info"
+  format: "json"
+  output: "both"
+  file: "/var/log/nspass/agent.log"
+  max_size: 100
+  max_backups: 5
+  max_age: 30
+  compress: true
+
 # 更新间隔（秒）
 update_interval: 300
-
-# 日志级别
-log_level: "info"
 EOF
-        print_info "默认配置文件已创建: $CONFIG_DIR/config.yaml"
+        config_created=true
+        print_info "配置文件已创建: $CONFIG_DIR/config.yaml"
+        
+        if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+            print_info "✓ 已设置服务器ID: $SERVER_ID"
+            print_info "✓ 已设置API令牌: ${API_TOKEN:0:10}..."
+        else
+            print_warn "⚠️  请编辑配置文件设置正确的 server_id 和 api.token"
+        fi
     else
         print_info "配置文件已存在，保持原有配置"
+        
+        # 如果提供了参数，询问是否更新现有配置
+        if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+            print_warn "检测到现有配置文件，但提供了新的配置参数"
+            echo ""
+            while true; do
+                read -p "是否更新现有配置文件中的 server_id 和 token？ [y/N]: " -n 1 -r
+                echo ""
+                case $REPLY in
+                    [Yy])
+                        update_existing_config
+                        break
+                        ;;
+                    [Nn]|"")
+                        print_info "保持现有配置不变"
+                        break
+                        ;;
+                    *)
+                        echo "请输入 y 或 n"
+                        ;;
+                esac
+            done
+        fi
     fi
     
     # 设置正确的权限
     chown -R root:root "$CONFIG_DIR"
+    chown -R root:root "$LOG_DIR"
     chmod 755 "$CONFIG_DIR"
+    chmod 755 "$LOG_DIR"
     chmod 644 "$CONFIG_DIR/config.yaml"
+    chmod 750 "$CONFIG_DIR/proxy"
+    chmod 750 "$CONFIG_DIR/iptables-backup"
+}
+
+# 更新现有配置文件
+update_existing_config() {
+    print_step "更新现有配置文件..."
+    
+    local config_file="$CONFIG_DIR/config.yaml"
+    local backup_file="$CONFIG_DIR/config.yaml.backup.$(date +%Y%m%d_%H%M%S)"
+    
+    # 备份现有配置
+    cp "$config_file" "$backup_file"
+    print_info "已备份现有配置: $backup_file"
+    
+    # 使用 sed 更新配置
+    if command -v sed >/dev/null 2>&1; then
+        # 更新 server_id
+        sed -i "s/^server_id: .*/server_id: \"$SERVER_ID\"/" "$config_file"
+        
+        # 更新 api.token
+        sed -i "/^api:/,/^[^ ]/ s/^  token: .*/  token: \"$API_TOKEN\"/" "$config_file"
+        
+        print_info "✓ 已更新服务器ID: $SERVER_ID"
+        print_info "✓ 已更新API令牌: ${API_TOKEN:0:10}..."
+    else
+        print_error "sed 命令不可用，无法自动更新配置"
+        print_warn "请手动编辑配置文件: $config_file"
+    fi
+    chmod 644 "$CONFIG_DIR/config.yaml"
+    chmod 750 "$CONFIG_DIR/proxy"
+    chmod 750 "$CONFIG_DIR/iptables-backup"
 }
 
 # 安装systemd服务
@@ -474,17 +678,42 @@ show_post_install_info() {
     echo "   版本: $installed_version"
     echo "   二进制文件: $INSTALL_DIR/nspass-agent"
     echo "   配置文件: $CONFIG_DIR/config.yaml"
+    echo "   日志目录: $LOG_DIR"
     echo "   服务名称: $SERVICE_NAME"
     echo ""
-    echo "🔧 下一步操作:"
-    echo "   1. 编辑配置文件设置API令牌:"
-    echo "      nano $CONFIG_DIR/config.yaml"
-    echo ""
+    
+    # 根据是否提供了配置参数显示不同的信息
+    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+        echo "✅ 配置状态:"
+        echo "   服务器ID: $SERVER_ID"
+        echo "   API令牌: ${API_TOKEN:0:10}..."
+        echo "   配置已完成，服务可以正常运行"
+        echo ""
+        echo "🔧 下一步操作:"
+        echo "   服务已启动，可以开始使用"
+        echo ""
+    else
+        echo "⚠️  配置状态:"
+        echo "   需要手动配置服务器ID和API令牌"
+        echo ""
+        echo "🔧 下一步操作:"
+        echo "   1. 编辑配置文件设置API令牌和服务器ID:"
+        echo "      nano $CONFIG_DIR/config.yaml"
+        echo "   2. 设置完成后重启服务:"
+        echo "      systemctl restart $SERVICE_NAME"
+        echo ""
+    fi
+    
     echo "💡 常用命令:"
     echo "   查看服务状态: systemctl status $SERVICE_NAME"
-    echo "   查看服务日志: journalctl -u $SERVICE_NAME -f"
+    echo "   查看实时日志: journalctl -u $SERVICE_NAME -f"
+    echo "   查看日志文件: tail -f $LOG_DIR/agent.log"
     echo "   重启服务:     systemctl restart $SERVICE_NAME"
     echo "   停止服务:     systemctl stop $SERVICE_NAME"
+    echo "   查看配置:     $INSTALL_DIR/nspass-agent --config $CONFIG_DIR/config.yaml --help"
+    echo ""
+    echo "📋 配置检查:"
+    echo "   配置文件语法检查: $INSTALL_DIR/nspass-agent --config $CONFIG_DIR/config.yaml --check"
     echo ""
     echo "📚 更多信息: https://github.com/$GITHUB_REPO"
     echo ""
@@ -496,6 +725,12 @@ main() {
     echo "NSPass Agent 安装/升级脚本 v$SCRIPT_VERSION"
     echo "======================================"
     echo ""
+    
+    # 解析命令行参数
+    parse_args "$@"
+    
+    # 验证参数
+    validate_args
     
     # 检查运行环境
     check_root

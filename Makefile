@@ -31,7 +31,7 @@ INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean
+.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean build-all release release-github
 
 # 默认目标
 all: proto-clean proto-gen build
@@ -147,12 +147,29 @@ build-all: proto-gen
 	@for os in linux darwin windows; do \
 		for arch in amd64 arm64; do \
 			echo "构建 $$os/$$arch..."; \
+			ext=""; \
+			if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
 			CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
 				go build -ldflags "$(LDFLAGS)" \
-				-o $(OUTPUT_DIR)/$(BINARY_NAME)-$$os-$$arch ./cmd/$(BINARY_NAME); \
+				-o $(OUTPUT_DIR)/$(BINARY_NAME)-$$os-$$arch$$ext ./cmd/$(BINARY_NAME); \
 		done; \
 	done
 	@echo "所有平台构建完成！"
+
+# 发布构建
+release: proto-gen
+	@echo "执行发布构建..."
+	@./scripts/release.sh $(VERSION)
+
+# 发布到GitHub
+release-github: release
+	@echo "发布到GitHub..."
+	@if [ -z "$(GITHUB_TOKEN)" ]; then \
+		echo "请设置GITHUB_TOKEN环境变量"; \
+		exit 1; \
+	fi
+	@echo "使用GitHub CLI发布..."
+	@gh release create $(VERSION) release/* --title "NSPass Agent $(VERSION)" --notes-file release/RELEASE_NOTES.md
 
 # 安装到系统
 install: build
@@ -176,13 +193,19 @@ help:
 	@echo "  build-all    构建所有平台版本"
 	@echo "  all          清理并重新构建（默认）"
 	@echo ""
+	@echo "发布相关："
+	@echo "  release      构建发布版本"
+	@echo "  release-github 发布到GitHub (需要GITHUB_TOKEN)"
+	@echo ""
+	@echo "测试相关："
+	@echo "  test         运行测试"
+	@echo ""
 	@echo "清理相关："
 	@echo "  clean        清理构建文件"
 	@echo "  deep-clean   深度清理（包括生成代码和缓存）"
 	@echo "  proto-clean  清理proto生成的代码"
 	@echo ""
 	@echo "开发相关："
-	@echo "  test         运行测试"
 	@echo "  lint         代码检查"
 	@echo "  format       格式化代码"
 	@echo "  deps         安装依赖"
@@ -196,4 +219,4 @@ help:
 	@echo "  uninstall    从系统卸载"
 	@echo ""
 	@echo "其他："
-	@echo "  help         显示此帮助信息" 
+	@echo "  help         显示此帮助信息"
