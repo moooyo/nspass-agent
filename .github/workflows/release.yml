@@ -49,12 +49,20 @@ jobs:
         ls -la generated/
         ls -la generated/model/
         
-        # 更新Go模块依赖，让Go识别新生成的包
+        # 确保generated目录下没有独立的go.mod
+        if [ -f generated/go.mod ]; then
+          echo "删除generated/go.mod以避免模块冲突..."
+          rm generated/go.mod
+        fi
+        
+        # 更新Go模块依赖
+        echo "更新Go模块依赖..."
         go mod tidy
         
-        # 验证模块依赖
-        echo "验证Go模块状态..."
-        go list -m all | grep nspass-agent
+        # 验证可以正常构建
+        echo "验证可以正常编译..."
+        go build -o /tmp/test-build ./cmd/nspass-agent
+        rm -f /tmp/test-build
 
     - name: Build binaries
       run: |

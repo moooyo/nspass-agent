@@ -119,6 +119,8 @@ proto-gen: proto-deps
 			--go-grpc_opt=paths=source_relative \
 			$$proto; \
 	done
+	@echo "确保生成的代码不创建独立的go.mod..."
+	@rm -f $(GENERATED_DIR)/go.mod
 	@echo "proto代码生成完成！"
 
 # 清理proto生成的代码
