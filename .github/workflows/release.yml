@@ -38,9 +38,20 @@ jobs:
         # 安装 protoc-gen-go 和 protoc-gen-go-grpc
         go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
         go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        
+        # 确保Go bin目录在PATH中
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
     - name: Generate protobuf code
       run: |
+        # 调试：检查工具是否可用
+        echo "检查工具可用性..."
+        which protoc || echo "protoc not found"
+        which protoc-gen-go || echo "protoc-gen-go not found"
+        which protoc-gen-go-grpc || echo "protoc-gen-go-grpc not found"
+        echo "PATH: $PATH"
+        echo "GOPATH: $(go env GOPATH)"
+        
         echo "生成protobuf代码..."
         make proto-gen
         
