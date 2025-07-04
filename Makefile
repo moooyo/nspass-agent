@@ -108,9 +108,11 @@ proto-gen: proto-deps
 	@echo "生成proto代码..."
 	@mkdir -p $(GENERATED_DIR)
 	@echo "Generated目录: $(GENERATED_DIR)"
+	@echo "找到的proto文件数量: $(shell find $(PROTO_DIR) -name '*.proto' | wc -l)"
 	@export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
 	for proto in $(PROTO_FILES); do \
 		echo "处理: $$proto"; \
+		echo "执行命令: protoc --proto_path=$(PROTO_DIR) --proto_path=$(PROTO_DIR)/google/protobuf --go_out=$(GENERATED_DIR) --go_opt=paths=source_relative --go-grpc_out=$(GENERATED_DIR) --go-grpc_opt=paths=source_relative $$proto"; \
 		protoc \
 			--proto_path=$(PROTO_DIR) \
 			--proto_path=$(PROTO_DIR)/google/protobuf \
@@ -118,7 +120,8 @@ proto-gen: proto-deps
 			--go_opt=paths=source_relative \
 			--go-grpc_out=$(GENERATED_DIR) \
 			--go-grpc_opt=paths=source_relative \
-			$$proto || { echo "生成 $$proto 失败"; exit 1; }; \
+			$$proto || { echo "❌ 生成 $$proto 失败，退出码: $$?"; exit 1; }; \
+		echo "✅ 完成处理: $$proto"; \
 	done
 	@echo "检查生成的文件..."
 	@ls -la $(GENERATED_DIR)/ || echo "generated目录为空"

@@ -52,8 +52,25 @@ jobs:
         echo "PATH: $PATH"
         echo "GOPATH: $(go env GOPATH)"
         
-        echo "生成protobuf代码..."
-        make proto-gen
+        # 确保PATH正确设置
+        export PATH="$PATH:$(go env GOPATH)/bin"
+        
+        echo "直接生成protobuf代码..."
+        mkdir -p generated
+        
+        # 找到所有proto文件并生成
+        find proto -name "*.proto" | while read proto; do
+          echo "处理: $proto"
+          protoc \
+            --proto_path=proto \
+            --proto_path=proto/google/protobuf \
+            --go_out=generated \
+            --go_opt=paths=source_relative \
+            --go-grpc_out=generated \
+            --go-grpc_opt=paths=source_relative \
+            "$proto" || { echo "❌ 生成 $proto 失败"; exit 1; }
+          echo "✅ 完成: $proto"
+        done
         
         # 验证生成的代码
         echo "验证生成的代码结构..."
