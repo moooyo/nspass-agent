@@ -107,6 +107,7 @@ proto-deps:
 proto-gen: proto-deps
 	@echo "生成proto代码..."
 	@mkdir -p $(GENERATED_DIR)
+	@echo "Generated目录: $(GENERATED_DIR)"
 	@export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
 	for proto in $(PROTO_FILES); do \
 		echo "处理: $$proto"; \
@@ -117,8 +118,16 @@ proto-gen: proto-deps
 			--go_opt=paths=source_relative \
 			--go-grpc_out=$(GENERATED_DIR) \
 			--go-grpc_opt=paths=source_relative \
-			$$proto; \
+			$$proto || { echo "生成 $$proto 失败"; exit 1; }; \
 	done
+	@echo "检查生成的文件..."
+	@ls -la $(GENERATED_DIR)/ || echo "generated目录为空"
+	@if [ -d $(GENERATED_DIR)/model ]; then \
+		echo "model目录内容:"; \
+		ls -la $(GENERATED_DIR)/model/; \
+	else \
+		echo "⚠️  model目录不存在"; \
+	fi
 	@echo "确保生成的代码不创建独立的go.mod..."
 	@rm -f $(GENERATED_DIR)/go.mod
 	@echo "proto代码生成完成！"

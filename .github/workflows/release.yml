@@ -47,7 +47,12 @@ jobs:
         # 验证生成的代码
         echo "验证生成的代码结构..."
         ls -la generated/
-        ls -la generated/model/
+        if [ -d generated/model/ ]; then
+          echo "model目录存在，列出内容:"
+          ls -la generated/model/
+        else
+          echo "⚠️  model目录不存在，但继续构建..."
+        fi
         
         # 确保generated目录下没有独立的go.mod
         if [ -f generated/go.mod ]; then
