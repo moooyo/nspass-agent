@@ -58,8 +58,14 @@ jobs:
         echo "直接生成protobuf代码..."
         mkdir -p generated
         
-        # 找到所有proto文件并生成
-        find proto -name "*.proto" | while read proto; do
+        # 检查proto文件是否存在
+        echo "检查proto文件..."
+        find proto -name "*.proto" | head -5
+        echo "总计proto文件数量: $(find proto -name "*.proto" | wc -l)"
+        
+        # 使用for循环而不是while read，避免子shell问题
+        echo "开始生成protobuf代码..."
+        for proto in $(find proto -name "*.proto"); do
           echo "处理: $proto"
           protoc \
             --proto_path=proto \
@@ -68,7 +74,7 @@ jobs:
             --go_opt=paths=source_relative \
             --go-grpc_out=generated \
             --go-grpc_opt=paths=source_relative \
-            "$proto" || { echo "❌ 生成 $proto 失败"; exit 1; }
+            "$proto" 2>&1 || { echo "❌ 生成 $proto 失败，错误码: $?"; exit 1; }
           echo "✅ 完成: $proto"
         done
         
