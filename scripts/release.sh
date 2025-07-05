@@ -91,14 +91,11 @@ build_binaries() {
     # 创建构建目录
     mkdir -p "$RELEASE_DIR"
     
-    # 支持的平台
+    # 支持的平台 - 仅Linux
     declare -A platforms=(
         ["linux-amd64"]="linux:amd64"
         ["linux-arm64"]="linux:arm64"
         ["linux-arm"]="linux:arm"
-        ["darwin-amd64"]="darwin:amd64"
-        ["darwin-arm64"]="darwin:arm64"
-        ["windows-amd64"]="windows:amd64"
     )
     
     # 获取版本信息
