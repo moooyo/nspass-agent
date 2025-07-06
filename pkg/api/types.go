@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	model "github.com/nspass/nspass-agent/generated/model"
@@ -108,6 +110,34 @@ type ServerConfigUpdateInfo struct {
 	ConfigVersion string    `json:"config_version"`
 	UpdateTime    time.Time `json:"update_time"`
 	UpdateMessage string    `json:"update_message"`
+}
+
+// IPTablesConfig iptables配置
+type IPTablesConfig struct {
+	ID            string            `json:"id"`
+	ConfigName    string            `json:"config_name"`
+	TableType     string            `json:"table_type"`
+	ChainType     string            `json:"chain_type"`
+	Protocol      string            `json:"protocol"`
+	SourceIP      string            `json:"source_ip"`
+	SourcePort    string            `json:"source_port"`
+	DestIP        string            `json:"dest_ip"`
+	DestPort      string            `json:"dest_port"`
+	Action        string            `json:"action"`
+	JumpTarget    string            `json:"jump_target"`
+	Rule          string            `json:"rule"`
+	Priority      int32             `json:"priority"`
+	Description   string            `json:"description"`
+	IsEnabled     bool              `json:"is_enabled"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	Metadata      map[string]string `json:"metadata"`
+}
+
+// IPTablesConfigsResponse 获取 iptables 配置的响应
+type IPTablesConfigsResponse struct {
+	Configs    []IPTablesConfig `json:"configs"`
+	TotalCount int32            `json:"total_count"`
 }
 
 // ConvertRouteFromProto 从proto转换路由配置
@@ -297,4 +327,105 @@ func ConvertForwardRuleFromProto(rule *model.ForwardRule) ForwardRuleConfig {
 	}
 
 	return config
+}
+
+// ConvertIPTablesConfigToRule 将IPTablesConfig转换为IPTableRule
+func ConvertIPTablesConfigToRule(config IPTablesConfig) IPTableRule {
+	rule := IPTableRule{
+		ID:      config.ID,
+		Enabled: config.IsEnabled,
+		Action:  "add", // 默认动作
+	}
+
+	// 映射表类型
+	switch config.TableType {
+	case "FILTER":
+		rule.Table = "filter"
+	case "NAT":
+		rule.Table = "nat"
+	case "MANGLE":
+		rule.Table = "mangle"
+	case "RAW":
+		rule.Table = "raw"
+	default:
+		rule.Table = "filter" // 默认
+	}
+
+	// 映射链类型
+	switch config.ChainType {
+	case "INPUT":
+		rule.Chain = "INPUT"
+	case "OUTPUT":
+		rule.Chain = "OUTPUT"
+	case "FORWARD":
+		rule.Chain = "FORWARD"
+	case "PREROUTING":
+		rule.Chain = "PREROUTING"
+	case "POSTROUTING":
+		rule.Chain = "POSTROUTING"
+	default:
+		rule.Chain = "INPUT" // 默认
+	}
+
+	// 如果有预制的规则，直接使用
+	if config.Rule != "" {
+		rule.Rule = config.Rule
+	} else {
+		// 否则根据配置参数构建规则
+		rule.Rule = buildIPTableRule(config)
+	}
+
+	return rule
+}
+
+// buildIPTableRule 根据配置构建iptables规则
+func buildIPTableRule(config IPTablesConfig) string {
+	var parts []string
+
+	// 添加协议
+	if config.Protocol != "" && config.Protocol != "ALL" {
+		parts = append(parts, fmt.Sprintf("-p %s", strings.ToLower(config.Protocol)))
+	}
+
+	// 添加源地址
+	if config.SourceIP != "" {
+		parts = append(parts, fmt.Sprintf("-s %s", config.SourceIP))
+	}
+
+	// 添加源端口
+	if config.SourcePort != "" {
+		parts = append(parts, fmt.Sprintf("--sport %s", config.SourcePort))
+	}
+
+	// 添加目标地址
+	if config.DestIP != "" {
+		parts = append(parts, fmt.Sprintf("-d %s", config.DestIP))
+	}
+
+	// 添加目标端口
+	if config.DestPort != "" {
+		parts = append(parts, fmt.Sprintf("--dport %s", config.DestPort))
+	}
+
+	// 添加动作
+	if config.JumpTarget != "" {
+		switch config.Action {
+		case "ACCEPT":
+			parts = append(parts, "-j ACCEPT")
+		case "DROP":
+			parts = append(parts, "-j DROP")
+		case "REJECT":
+			parts = append(parts, "-j REJECT")
+		case "DNAT":
+			parts = append(parts, fmt.Sprintf("-j DNAT --to-destination %s", config.JumpTarget))
+		case "SNAT":
+			parts = append(parts, fmt.Sprintf("-j SNAT --to-source %s", config.JumpTarget))
+		case "MASQUERADE":
+			parts = append(parts, "-j MASQUERADE")
+		default:
+			parts = append(parts, fmt.Sprintf("-j %s", config.Action))
+		}
+	}
+
+	return strings.Join(parts, " ")
 }

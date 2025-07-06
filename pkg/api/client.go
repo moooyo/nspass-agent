@@ -505,3 +505,115 @@ type AgentStatus struct {
 	SystemInfo    map[string]interface{} `json:"system_info"`
 	Errors        []string               `json:"errors"`
 }
+
+
+
+// GetServerIPTablesConfigs 获取服务器的 iptables 配置
+func (c *Client) GetServerIPTablesConfigs(serverID string) (*IPTablesConfigsResponse, error) {
+	startTime := time.Now()
+	log := logger.GetAPILogger()
+
+	url := fmt.Sprintf("%s/api/v1/servers/%s/iptables/configs", c.config.BaseURL, serverID)
+
+	log.WithFields(logrus.Fields{
+		"url":       url,
+		"server_id": serverID,
+	}).Debug("开始获取服务器iptables配置")
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		logger.LogError(err, "创建iptables配置请求失败", logrus.Fields{
+			"url":       url,
+			"server_id": serverID,
+		})
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	c.setAuthHeaders(req)
+
+	var resp *http.Response
+	var lastErr error
+
+	// 重试机制
+	for i := 0; i < c.config.RetryCount; i++ {
+		attemptStart := time.Now()
+		resp, lastErr = c.httpClient.Do(req)
+		attemptDuration := time.Since(attemptStart)
+
+		if lastErr == nil && resp.StatusCode == http.StatusOK {
+			log.WithFields(logrus.Fields{
+				"attempt":     i + 1,
+				"duration_ms": attemptDuration.Milliseconds(),
+				"server_id":   serverID,
+			}).Debug("iptables配置请求成功")
+			break
+		}
+
+		if resp != nil {
+			resp.Body.Close()
+		}
+
+		if i < c.config.RetryCount-1 {
+			retryDelay := time.Duration(c.config.RetryDelay) * time.Second
+			log.WithFields(logrus.Fields{
+				"attempt":      i + 1,
+				"max_attempts": c.config.RetryCount,
+				"error":        lastErr,
+				"retry_delay":  retryDelay,
+				"server_id":    serverID,
+			}).Warn("iptables配置请求失败，准备重试")
+			time.Sleep(retryDelay)
+		}
+	}
+
+	if lastErr != nil {
+		logger.LogError(lastErr, "iptables配置请求最终失败", logrus.Fields{
+			"url":            url,
+			"server_id":      serverID,
+			"retry_count":    c.config.RetryCount,
+			"total_duration": time.Since(startTime).Milliseconds(),
+		})
+		return nil, fmt.Errorf("iptables配置请求失败: %w", lastErr)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		logger.LogError(fmt.Errorf("iptables配置API返回错误状态码: %d", resp.StatusCode),
+			"iptables配置API响应错误", logrus.Fields{
+				"status_code": resp.StatusCode,
+				"response":    string(body),
+				"url":         url,
+				"server_id":   serverID,
+			})
+		return nil, fmt.Errorf("iptables配置API返回错误状态码: %d, 响应: %s", resp.StatusCode, string(body))
+	}
+
+	var config IPTablesConfigsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		logger.LogError(err, "解析iptables配置响应失败", logrus.Fields{
+			"url":       url,
+			"server_id": serverID,
+		})
+		return nil, fmt.Errorf("解析iptables配置响应失败: %w", err)
+	}
+
+	duration := time.Since(startTime)
+
+	// 记录性能指标
+	logger.LogPerformance("api_get_iptables_configs", duration, logrus.Fields{
+		"server_id":      serverID,
+		"configs_count":  len(config.Configs),
+		"total_count":    config.TotalCount,
+		"url":            url,
+	})
+
+	log.WithFields(logrus.Fields{
+		"server_id":      serverID,
+		"configs_count":  len(config.Configs),
+		"total_count":    config.TotalCount,
+		"duration_ms":    duration.Milliseconds(),
+	}).Info("成功获取iptables配置")
+
+	return &config, nil
+}

@@ -291,37 +291,42 @@ func (s *Service) updateProxyServices(serverConfig *api.ServerConfigData) error 
 
 // updateIPTablesRules 更新iptables规则
 func (s *Service) updateIPTablesRules(serverConfig *api.ServerConfigData) error {
-	// 转换配置格式
+	log := logger.GetComponentLogger("agent-service")
+
+	// 从API获取iptables配置
+	iptablesConfigs, err := s.apiClient.GetServerIPTablesConfigs(s.serverID)
+	if err != nil {
+		log.WithError(err).Error("获取iptables配置失败")
+		return fmt.Errorf("获取iptables配置失败: %w", err)
+	}
+
+	log.WithField("configs_count", len(iptablesConfigs.Configs)).Info("获取到iptables配置")
+
+	// 转换iptables配置为规则
 	var iptableRules []api.IPTableRule
 
-	for _, rule := range serverConfig.ForwardRules {
-		if rule.Status != "active" {
+	for _, config := range iptablesConfigs.Configs {
+		if !config.IsEnabled {
+			log.WithField("config_id", config.ID).Debug("跳过已禁用的iptables配置")
 			continue
 		}
 
-		// 根据转发规则生成iptables规则
-		iptableRule := api.IPTableRule{
-			ID:      fmt.Sprintf("forward_%d", rule.ID),
-			Table:   "nat",
-			Chain:   "PREROUTING",
-			Action:  "add",
-			Enabled: rule.Status == "active",
-		}
+		// 转换配置为规则
+		rule := api.ConvertIPTablesConfigToRule(config)
+		iptableRules = append(iptableRules, rule)
 
-		// 生成规则内容
-		if rule.ForwardType == "tcp" || rule.ForwardType == "all" {
-			iptableRule.Rule = fmt.Sprintf("-p tcp --dport %d -j DNAT --to-destination %s:%d",
-				rule.SourcePort, rule.TargetAddress, rule.TargetPort)
-		} else if rule.ForwardType == "udp" {
-			iptableRule.Rule = fmt.Sprintf("-p udp --dport %d -j DNAT --to-destination %s:%d",
-				rule.SourcePort, rule.TargetAddress, rule.TargetPort)
-		}
-
-		if iptableRule.Rule != "" {
-			iptableRules = append(iptableRules, iptableRule)
-		}
+		log.WithFields(logrus.Fields{
+			"config_id":    config.ID,
+			"config_name":  config.ConfigName,
+			"table":        rule.Table,
+			"chain":        rule.Chain,
+			"rule":         rule.Rule,
+		}).Debug("转换iptables配置为规则")
 	}
 
+	log.WithField("total_rules", len(iptableRules)).Info("开始应用iptables规则")
+
+	// 应用规则
 	return s.iptablesManager.UpdateRules(iptableRules)
 }
 
