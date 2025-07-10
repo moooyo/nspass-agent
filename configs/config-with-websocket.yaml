@@ -1,0 +1,64 @@
+server_id: "agent-001"
+
+# API配置
+api:
+  base_url: "https://api.nspass.com"
+  token: "your-auth-token-here"
+  timeout: 30
+  retry_count: 3
+  retry_delay: 5
+  tls: true
+  tls_skip_verify: false
+
+# 代理配置
+proxy:
+  bin_path: "/opt/nspass/bin"
+  config_path: "/etc/nspass/proxy"
+  enabled_types: ["shadowsocks", "trojan"]
+  auto_start: true
+  restart_on_fail: true
+  
+  # 进程监控配置
+  monitor:
+    enable: true
+    check_interval: 30
+    restart_cooldown: 60
+
+# IPTables配置
+iptables:
+  enable: true
+  backup_path: "/etc/nspass/iptables/backup"
+  rules_path: "/etc/nspass/iptables/rules"
+  chain_prefix: "NSPASS"
+  
+  # 规则配置
+  rules:
+    enable_nat: true
+    enable_filter: true
+    enable_redirect: true
+    
+    # 白名单配置
+    whitelist:
+      enable: true
+      ips: ["127.0.0.1", "::1"]
+      
+    # 黑名单配置
+    blacklist:
+      enable: false
+      ips: []
+
+# 日志配置
+logger:
+  level: "info"
+  format: "json"
+  output: "file"
+  file_path: "/var/log/nspass-agent.log"
+  max_size: 100
+  max_age: 30
+  max_backups: 10
+
+# 更新间隔（秒）
+update_interval: 300
+
+# 全局日志级别
+log_level: "info"

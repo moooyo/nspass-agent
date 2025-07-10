@@ -13,6 +13,7 @@ import (
 	"github.com/nspass/nspass-agent/pkg/iptables"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/nspass/nspass-agent/pkg/proxy"
+	"github.com/nspass/nspass-agent/pkg/websocket"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -25,6 +26,7 @@ type Service struct {
 	apiClient       *api.Client
 	proxyManager    *proxy.Manager
 	iptablesManager iptables.ManagerInterface
+	wsClient         *websocket.Client
 
 	serverID       string
 	lastConfigHash string
@@ -64,12 +66,23 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 		cancel:          cancel,
 	}
 
+	// 创建任务处理器
+	taskHandler := websocket.NewDefaultTaskHandler(cfg, proxyManager, iptablesManager)
+	
+	// 创建监控数据收集器
+	metricsCollector := websocket.NewDefaultMetricsCollector(proxyManager)
+	
+	// 创建WebSocket客户端
+	wsClient := websocket.NewClient(cfg, serverID, cfg.API.Token, taskHandler, metricsCollector)
+	service.wsClient = wsClient
+
 	logger.LogStartup("agent-service", "1.0", map[string]interface{}{
 		"server_id":        serverID,
 		"update_interval":  cfg.UpdateInterval,
 		"api_base_url":     cfg.API.BaseURL,
 		"proxy_enabled":    len(cfg.Proxy.EnabledTypes) > 0,
 		"iptables_enabled": cfg.IPTables.Enable,
+		"websocket_enabled": true,
 	})
 
 	return service, nil
@@ -95,6 +108,13 @@ func (s *Service) Start() error {
 	s.wg.Add(1)
 	go s.statusReportLoop()
 
+	// 启动WebSocket客户端
+	if s.wsClient != nil {
+		if err := s.wsClient.Start(); err != nil {
+			log.WithError(err).Error("启动WebSocket客户端失败")
+		}
+	}
+
 	s.running = true
 
 	log.Info("Agent服务启动完成")
@@ -112,6 +132,13 @@ func (s *Service) Stop() error {
 
 	log := logger.GetComponentLogger("agent-service")
 	log.Info("停止Agent服务")
+
+	// 停止WebSocket客户端
+	if s.wsClient != nil {
+		if err := s.wsClient.Stop(); err != nil {
+			log.WithError(err).Error("停止WebSocket客户端失败")
+		}
+	}
 
 	// 取消上下文
 	s.cancel()

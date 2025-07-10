@@ -31,7 +31,7 @@ INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean build-all release release-github
+.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean build-all release release-github run
 
 # 默认目标
 all: proto-clean proto-gen build
@@ -184,6 +184,11 @@ uninstall:
 	@sudo rm -f $(INSTALL_PATH)/$(BINARY_NAME)
 	@echo "卸载完成"
 
+# 运行程序
+run: build
+	@echo "运行 $(BINARY_NAME)..."
+	@./$(BINARY_PATH) -c configs/config.yaml
+
 # 显示帮助信息
 help:
 	@echo "NSPass Agent Makefile 使用说明："
@@ -192,6 +197,9 @@ help:
 	@echo "  build        构建二进制文件"
 	@echo "  build-all    构建所有平台版本"
 	@echo "  all          清理并重新构建（默认）"
+	@echo ""
+	@echo "运行相关："
+	@echo "  run          运行Agent程序"
 	@echo ""
 	@echo "发布相关："
 	@echo "  release      构建发布版本"
