@@ -351,7 +351,7 @@ func (c *DefaultMetricsCollector) CollectPerformanceMetrics() (*model.Performanc
 		for status, count := range taskStats {
 			customMetrics["task_"+strings.ToLower(strings.ReplaceAll(status, "TASK_STATUS_", ""))] = float64(count)
 		}
-		
+
 		c.log.WithField("task_stats", taskStats).Debug("Added task statistics to performance metrics")
 	}
 

@@ -74,10 +74,10 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 
 	// 创建WebSocket客户端
 	wsClient := websocket.NewClient(cfg, serverID, cfg.API.Token, taskHandler, metricsCollector)
-	
+
 	// 设置任务统计提供者，用于监控数据收集
 	wsClient.SetTaskStatsProvider()
-	
+
 	service.wsClient = wsClient
 
 	logger.LogStartup("agent-service", "1.0", map[string]interface{}{

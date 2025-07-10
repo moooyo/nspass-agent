@@ -17,23 +17,23 @@ import (
 
 // TaskRecord represents a task record in memory
 type TaskRecord struct {
-	TaskID      string                 `json:"task_id"`
-	TaskType    model.TaskType         `json:"task_type"`
-	Status      model.TaskStatus       `json:"status"`
-	CreatedAt   time.Time              `json:"created_at"`
-	StartedAt   *time.Time             `json:"started_at,omitempty"`
-	CompletedAt *time.Time             `json:"completed_at,omitempty"`
-	Result      *model.TaskResult      `json:"result,omitempty"`
-	ErrorMsg    string                 `json:"error_message,omitempty"`
-	RetryCount  int                    `json:"retry_count"`
-	LastRetryAt *time.Time             `json:"last_retry_at,omitempty"`
+	TaskID      string            `json:"task_id"`
+	TaskType    model.TaskType    `json:"task_type"`
+	Status      model.TaskStatus  `json:"status"`
+	CreatedAt   time.Time         `json:"created_at"`
+	StartedAt   *time.Time        `json:"started_at,omitempty"`
+	CompletedAt *time.Time        `json:"completed_at,omitempty"`
+	Result      *model.TaskResult `json:"result,omitempty"`
+	ErrorMsg    string            `json:"error_message,omitempty"`
+	RetryCount  int               `json:"retry_count"`
+	LastRetryAt *time.Time        `json:"last_retry_at,omitempty"`
 }
 
 // TaskManager manages task states in memory
 type TaskManager struct {
-	tasks  map[string]*TaskRecord
-	mu     sync.RWMutex
-	log    *logrus.Entry
+	tasks map[string]*TaskRecord
+	mu    sync.RWMutex
+	log   *logrus.Entry
 }
 
 // NewTaskManager creates a new task manager
@@ -56,7 +56,7 @@ func (tm *TaskManager) GetTask(taskID string) (*TaskRecord, bool) {
 func (tm *TaskManager) CreateTask(taskID string, taskType model.TaskType) *TaskRecord {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	
+
 	now := time.Now()
 	task := &TaskRecord{
 		TaskID:    taskID,
@@ -64,13 +64,13 @@ func (tm *TaskManager) CreateTask(taskID string, taskType model.TaskType) *TaskR
 		Status:    model.TaskStatus_TASK_STATUS_PENDING,
 		CreatedAt: now,
 	}
-	
+
 	tm.tasks[taskID] = task
 	tm.log.WithFields(logrus.Fields{
 		"task_id":   taskID,
 		"task_type": taskType.String(),
 	}).Info("Created new task record")
-	
+
 	return task
 }
 
@@ -78,18 +78,18 @@ func (tm *TaskManager) CreateTask(taskID string, taskType model.TaskType) *TaskR
 func (tm *TaskManager) UpdateTaskStatus(taskID string, status model.TaskStatus) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	
+
 	if task, exists := tm.tasks[taskID]; exists {
 		task.Status = status
 		now := time.Now()
-		
+
 		switch status {
 		case model.TaskStatus_TASK_STATUS_RUNNING:
 			task.StartedAt = &now
 		case model.TaskStatus_TASK_STATUS_COMPLETED, model.TaskStatus_TASK_STATUS_FAILED, model.TaskStatus_TASK_STATUS_CANCELLED:
 			task.CompletedAt = &now
 		}
-		
+
 		tm.log.WithFields(logrus.Fields{
 			"task_id": taskID,
 			"status":  status.String(),
@@ -101,11 +101,11 @@ func (tm *TaskManager) UpdateTaskStatus(taskID string, status model.TaskStatus) 
 func (tm *TaskManager) SetTaskResult(taskID string, result *model.TaskResult, errorMsg string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	
+
 	if task, exists := tm.tasks[taskID]; exists {
 		task.Result = result
 		task.ErrorMsg = errorMsg
-		
+
 		if result != nil {
 			task.Status = result.Status
 		}
@@ -116,12 +116,12 @@ func (tm *TaskManager) SetTaskResult(taskID string, result *model.TaskResult, er
 func (tm *TaskManager) IncrementRetryCount(taskID string) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	
+
 	if task, exists := tm.tasks[taskID]; exists {
 		task.RetryCount++
 		now := time.Now()
 		task.LastRetryAt = &now
-		
+
 		tm.log.WithFields(logrus.Fields{
 			"task_id":     taskID,
 			"retry_count": task.RetryCount,
@@ -133,17 +133,17 @@ func (tm *TaskManager) IncrementRetryCount(taskID string) {
 func (tm *TaskManager) CleanupOldTasks() {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
-	
+
 	cutoff := time.Now().Add(-24 * time.Hour)
 	cleaned := 0
-	
+
 	for taskID, task := range tm.tasks {
 		if task.CompletedAt != nil && task.CompletedAt.Before(cutoff) {
 			delete(tm.tasks, taskID)
 			cleaned++
 		}
 	}
-	
+
 	if cleaned > 0 {
 		tm.log.WithField("cleaned_count", cleaned).Info("Cleaned up old tasks")
 	}
@@ -153,12 +153,12 @@ func (tm *TaskManager) CleanupOldTasks() {
 func (tm *TaskManager) GetTaskStats() map[string]int {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
-	
+
 	stats := make(map[string]int)
 	for _, task := range tm.tasks {
 		stats[task.Status.String()]++
 	}
-	
+
 	return stats
 }
 
@@ -192,9 +192,9 @@ func (h *DefaultTaskHandler) CheckTaskStatus(taskID string, taskType model.TaskT
 	}
 
 	h.log.WithFields(logrus.Fields{
-		"task_id":      taskID,
-		"task_status":  task.Status.String(),
-		"retry_count":  task.RetryCount,
+		"task_id":     taskID,
+		"task_status": task.Status.String(),
+		"retry_count": task.RetryCount,
 	}).Debug("Found existing task record")
 
 	switch task.Status {

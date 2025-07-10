@@ -322,7 +322,7 @@ func (c *Client) handleTaskMessage(message *model.WebSocketMessage) {
 
 	// Check task status first
 	shouldExecute, existingResult := c.taskHandler.CheckTaskStatus(taskMessage.TaskId, taskMessage.TaskType)
-	
+
 	if !shouldExecute {
 		if existingResult != nil {
 			// Task already completed, send immediate ACK with existing result
