@@ -26,7 +26,7 @@ type Service struct {
 	apiClient       *api.Client
 	proxyManager    *proxy.Manager
 	iptablesManager iptables.ManagerInterface
-	wsClient         *websocket.Client
+	wsClient        *websocket.Client
 
 	serverID       string
 	lastConfigHash string
@@ -68,20 +68,24 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 
 	// 创建任务处理器
 	taskHandler := websocket.NewDefaultTaskHandler(cfg, proxyManager, iptablesManager)
-	
+
 	// 创建监控数据收集器
 	metricsCollector := websocket.NewDefaultMetricsCollector(proxyManager)
-	
+
 	// 创建WebSocket客户端
 	wsClient := websocket.NewClient(cfg, serverID, cfg.API.Token, taskHandler, metricsCollector)
+	
+	// 设置任务统计提供者，用于监控数据收集
+	wsClient.SetTaskStatsProvider()
+	
 	service.wsClient = wsClient
 
 	logger.LogStartup("agent-service", "1.0", map[string]interface{}{
-		"server_id":        serverID,
-		"update_interval":  cfg.UpdateInterval,
-		"api_base_url":     cfg.API.BaseURL,
-		"proxy_enabled":    len(cfg.Proxy.EnabledTypes) > 0,
-		"iptables_enabled": cfg.IPTables.Enable,
+		"server_id":         serverID,
+		"update_interval":   cfg.UpdateInterval,
+		"api_base_url":      cfg.API.BaseURL,
+		"proxy_enabled":     len(cfg.Proxy.EnabledTypes) > 0,
+		"iptables_enabled":  cfg.IPTables.Enable,
 		"websocket_enabled": true,
 	})
 
@@ -343,11 +347,11 @@ func (s *Service) updateIPTablesRules(serverConfig *api.ServerConfigData) error 
 		iptableRules = append(iptableRules, rule)
 
 		log.WithFields(logrus.Fields{
-			"config_id":    config.ID,
-			"config_name":  config.ConfigName,
-			"table":        rule.Table,
-			"chain":        rule.Chain,
-			"rule":         rule.Rule,
+			"config_id":   config.ID,
+			"config_name": config.ConfigName,
+			"table":       rule.Table,
+			"chain":       rule.Chain,
+			"rule":        rule.Rule,
 		}).Debug("转换iptables配置为规则")
 	}
 

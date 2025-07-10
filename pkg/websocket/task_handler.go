@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sync"
+	"time"
 
 	"github.com/nspass/nspass-agent/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
@@ -13,11 +15,159 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// TaskRecord represents a task record in memory
+type TaskRecord struct {
+	TaskID      string                 `json:"task_id"`
+	TaskType    model.TaskType         `json:"task_type"`
+	Status      model.TaskStatus       `json:"status"`
+	CreatedAt   time.Time              `json:"created_at"`
+	StartedAt   *time.Time             `json:"started_at,omitempty"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+	Result      *model.TaskResult      `json:"result,omitempty"`
+	ErrorMsg    string                 `json:"error_message,omitempty"`
+	RetryCount  int                    `json:"retry_count"`
+	LastRetryAt *time.Time             `json:"last_retry_at,omitempty"`
+}
+
+// TaskManager manages task states in memory
+type TaskManager struct {
+	tasks  map[string]*TaskRecord
+	mu     sync.RWMutex
+	log    *logrus.Entry
+}
+
+// NewTaskManager creates a new task manager
+func NewTaskManager() *TaskManager {
+	return &TaskManager{
+		tasks: make(map[string]*TaskRecord),
+		log:   logger.GetComponentLogger("task-manager"),
+	}
+}
+
+// GetTask retrieves a task record
+func (tm *TaskManager) GetTask(taskID string) (*TaskRecord, bool) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	task, exists := tm.tasks[taskID]
+	return task, exists
+}
+
+// CreateTask creates a new task record
+func (tm *TaskManager) CreateTask(taskID string, taskType model.TaskType) *TaskRecord {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	now := time.Now()
+	task := &TaskRecord{
+		TaskID:    taskID,
+		TaskType:  taskType,
+		Status:    model.TaskStatus_TASK_STATUS_PENDING,
+		CreatedAt: now,
+	}
+	
+	tm.tasks[taskID] = task
+	tm.log.WithFields(logrus.Fields{
+		"task_id":   taskID,
+		"task_type": taskType.String(),
+	}).Info("Created new task record")
+	
+	return task
+}
+
+// UpdateTaskStatus updates task status
+func (tm *TaskManager) UpdateTaskStatus(taskID string, status model.TaskStatus) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	if task, exists := tm.tasks[taskID]; exists {
+		task.Status = status
+		now := time.Now()
+		
+		switch status {
+		case model.TaskStatus_TASK_STATUS_RUNNING:
+			task.StartedAt = &now
+		case model.TaskStatus_TASK_STATUS_COMPLETED, model.TaskStatus_TASK_STATUS_FAILED, model.TaskStatus_TASK_STATUS_CANCELLED:
+			task.CompletedAt = &now
+		}
+		
+		tm.log.WithFields(logrus.Fields{
+			"task_id": taskID,
+			"status":  status.String(),
+		}).Debug("Updated task status")
+	}
+}
+
+// SetTaskResult sets task result
+func (tm *TaskManager) SetTaskResult(taskID string, result *model.TaskResult, errorMsg string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	if task, exists := tm.tasks[taskID]; exists {
+		task.Result = result
+		task.ErrorMsg = errorMsg
+		
+		if result != nil {
+			task.Status = result.Status
+		}
+	}
+}
+
+// IncrementRetryCount increments retry count for a task
+func (tm *TaskManager) IncrementRetryCount(taskID string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	if task, exists := tm.tasks[taskID]; exists {
+		task.RetryCount++
+		now := time.Now()
+		task.LastRetryAt = &now
+		
+		tm.log.WithFields(logrus.Fields{
+			"task_id":     taskID,
+			"retry_count": task.RetryCount,
+		}).Debug("Incremented task retry count")
+	}
+}
+
+// CleanupOldTasks removes old completed tasks (older than 24 hours)
+func (tm *TaskManager) CleanupOldTasks() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	
+	cutoff := time.Now().Add(-24 * time.Hour)
+	cleaned := 0
+	
+	for taskID, task := range tm.tasks {
+		if task.CompletedAt != nil && task.CompletedAt.Before(cutoff) {
+			delete(tm.tasks, taskID)
+			cleaned++
+		}
+	}
+	
+	if cleaned > 0 {
+		tm.log.WithField("cleaned_count", cleaned).Info("Cleaned up old tasks")
+	}
+}
+
+// GetTaskStats returns task statistics
+func (tm *TaskManager) GetTaskStats() map[string]int {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	
+	stats := make(map[string]int)
+	for _, task := range tm.tasks {
+		stats[task.Status.String()]++
+	}
+	
+	return stats
+}
+
 // DefaultTaskHandler 默认任务处理器
 type DefaultTaskHandler struct {
 	config          *config.Config
 	proxyManager    *proxy.Manager
 	iptablesManager iptables.ManagerInterface
+	taskManager     *TaskManager
 	log             *logrus.Entry
 }
 
@@ -27,7 +177,55 @@ func NewDefaultTaskHandler(cfg *config.Config, proxyManager *proxy.Manager, ipta
 		config:          cfg,
 		proxyManager:    proxyManager,
 		iptablesManager: iptablesManager,
+		taskManager:     NewTaskManager(),
 		log:             logger.GetComponentLogger("task-handler"),
+	}
+}
+
+// CheckTaskStatus checks task status and determines how to handle it
+func (h *DefaultTaskHandler) CheckTaskStatus(taskID string, taskType model.TaskType) (shouldExecute bool, existingResult *model.TaskResult) {
+	task, exists := h.taskManager.GetTask(taskID)
+	if !exists {
+		// Task doesn't exist, should execute
+		h.taskManager.CreateTask(taskID, taskType)
+		return true, nil
+	}
+
+	h.log.WithFields(logrus.Fields{
+		"task_id":      taskID,
+		"task_status":  task.Status.String(),
+		"retry_count":  task.RetryCount,
+	}).Debug("Found existing task record")
+
+	switch task.Status {
+	case model.TaskStatus_TASK_STATUS_COMPLETED:
+		// Task already completed, return existing result
+		h.log.WithField("task_id", taskID).Info("Task already completed, returning cached result")
+		return false, task.Result
+
+	case model.TaskStatus_TASK_STATUS_RUNNING:
+		// Task is currently running, don't execute again
+		h.log.WithField("task_id", taskID).Info("Task is currently running, skipping execution")
+		return false, nil
+
+	case model.TaskStatus_TASK_STATUS_PENDING, model.TaskStatus_TASK_STATUS_FAILED:
+		// Task is pending or failed, should retry
+		h.log.WithField("task_id", taskID).Info("Task is pending or failed, will retry execution")
+		h.taskManager.IncrementRetryCount(taskID)
+		return true, nil
+
+	case model.TaskStatus_TASK_STATUS_CANCELLED:
+		// Task was cancelled, don't execute
+		h.log.WithField("task_id", taskID).Info("Task was cancelled, skipping execution")
+		return false, nil
+
+	default:
+		// Unknown status, treat as pending
+		h.log.WithFields(logrus.Fields{
+			"task_id": taskID,
+			"status":  task.Status.String(),
+		}).Warn("Unknown task status, treating as pending")
+		return true, nil
 	}
 }
 
@@ -39,9 +237,28 @@ func (h *DefaultTaskHandler) HandleTask(ctx context.Context, task *model.TaskMes
 		"title":     task.Title,
 	}).Info("开始处理任务")
 
+	// Check task status first
+	shouldExecute, existingResult := h.CheckTaskStatus(task.TaskId, task.TaskType)
+	if !shouldExecute {
+		if existingResult != nil {
+			// Return existing result for completed tasks
+			return existingResult, nil
+		}
+		// For running tasks, return a running status result
+		return &model.TaskResult{
+			TaskId: task.TaskId,
+			Status: model.TaskStatus_TASK_STATUS_RUNNING,
+			Output: "Task is currently running or was cancelled",
+		}, nil
+	}
+
+	// Mark task as running
+	h.taskManager.UpdateTaskStatus(task.TaskId, model.TaskStatus_TASK_STATUS_RUNNING)
+
 	var result *model.TaskResult
 	var err error
 
+	// Execute the task based on type
 	switch task.TaskType {
 	case model.TaskType_TASK_TYPE_CONFIG_UPDATE:
 		result, err = h.handleConfigUpdate(ctx, task)
@@ -59,11 +276,31 @@ func (h *DefaultTaskHandler) HandleTask(ctx context.Context, task *model.TaskMes
 		err = fmt.Errorf("不支持的任务类型: %s", task.TaskType.String())
 	}
 
+	// Update task status and result
 	if err != nil {
+		h.taskManager.UpdateTaskStatus(task.TaskId, model.TaskStatus_TASK_STATUS_FAILED)
+		h.taskManager.SetTaskResult(task.TaskId, nil, err.Error())
 		h.log.WithError(err).WithField("task_id", task.TaskId).Error("任务处理失败")
 	} else {
+		if result != nil {
+			result.TaskId = task.TaskId
+			if result.Status == model.TaskStatus_TASK_STATUS_UNSPECIFIED {
+				result.Status = model.TaskStatus_TASK_STATUS_COMPLETED
+			}
+		} else {
+			result = &model.TaskResult{
+				TaskId: task.TaskId,
+				Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+				Output: "Task completed successfully",
+			}
+		}
+		h.taskManager.UpdateTaskStatus(task.TaskId, result.Status)
+		h.taskManager.SetTaskResult(task.TaskId, result, "")
 		h.log.WithField("task_id", task.TaskId).Info("任务处理成功")
 	}
+
+	// Cleanup old tasks periodically
+	go h.taskManager.CleanupOldTasks()
 
 	return result, err
 }
@@ -106,9 +343,9 @@ func (h *DefaultTaskHandler) updateProxyConfig(ctx context.Context, params *mode
 	}
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  output,
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: output,
 	}, nil
 }
 
@@ -121,9 +358,9 @@ func (h *DefaultTaskHandler) updateIPTablesConfig(ctx context.Context, params *m
 	output := fmt.Sprintf("iptables配置更新完成，配置类型: %s", params.ConfigType)
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  output,
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: output,
 	}, nil
 }
 
@@ -156,9 +393,9 @@ func (h *DefaultTaskHandler) restartProxyService(ctx context.Context, params *mo
 	}
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  "代理服务重启成功",
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: "代理服务重启成功",
 	}, nil
 }
 
@@ -174,9 +411,9 @@ func (h *DefaultTaskHandler) restartAgentService(ctx context.Context, params *mo
 	}
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  "Agent服务重启成功",
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: "Agent服务重启成功",
 	}, nil
 }
 
@@ -200,9 +437,9 @@ func (h *DefaultTaskHandler) handleSyncRules(ctx context.Context, task *model.Ta
 	output := fmt.Sprintf("规则同步完成，同步了 %d 条规则", ruleCount)
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  output,
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: output,
 	}, nil
 }
 
@@ -226,9 +463,9 @@ func (h *DefaultTaskHandler) handleSyncUsers(ctx context.Context, task *model.Ta
 	output := fmt.Sprintf("用户同步完成，同步了 %d 个用户", userCount)
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  output,
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: output,
 	}, nil
 }
 
@@ -245,13 +482,13 @@ func (h *DefaultTaskHandler) handleCollectMetrics(ctx context.Context, task *mod
 	// 这里应该实现监控数据收集逻辑
 	// 可能需要立即收集并上报监控数据
 	metricsCount := len(params.MetricsTypes)
-	
+
 	output := fmt.Sprintf("监控数据收集完成，收集了 %d 种类型的监控数据", metricsCount)
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  model.TaskStatus_TASK_STATUS_COMPLETED,
-		Output:  output,
+		TaskId: "",
+		Status: model.TaskStatus_TASK_STATUS_COMPLETED,
+		Output: output,
 	}, nil
 }
 
@@ -267,7 +504,7 @@ func (h *DefaultTaskHandler) handleHealthCheck(ctx context.Context, task *model.
 
 	// 执行健康检查
 	checks := make(map[string]bool)
-	
+
 	for _, checkType := range params.CheckTypes {
 		switch checkType {
 		case "system":
@@ -298,9 +535,9 @@ func (h *DefaultTaskHandler) handleHealthCheck(ctx context.Context, task *model.
 	}
 
 	return &model.TaskResult{
-		TaskId:  "",
-		Status:  status,
-		Output:  output,
+		TaskId: "",
+		Status: status,
+		Output: output,
 	}, nil
 }
 
@@ -331,4 +568,30 @@ func (h *DefaultTaskHandler) checkIPTablesHealth(ctx context.Context) bool {
 		return true // 简化实现
 	}
 	return false
+}
+
+// GetTaskStats returns task statistics
+func (h *DefaultTaskHandler) GetTaskStats() map[string]int {
+	return h.taskManager.GetTaskStats()
+}
+
+// GetTaskManager returns the task manager instance
+func (h *DefaultTaskHandler) GetTaskManager() *TaskManager {
+	return h.taskManager
+}
+
+// CancelTask cancels a running task
+func (h *DefaultTaskHandler) CancelTask(taskID string) error {
+	task, exists := h.taskManager.GetTask(taskID)
+	if !exists {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+
+	if task.Status == model.TaskStatus_TASK_STATUS_RUNNING {
+		h.taskManager.UpdateTaskStatus(taskID, model.TaskStatus_TASK_STATUS_CANCELLED)
+		h.log.WithField("task_id", taskID).Info("Task cancelled")
+		return nil
+	}
+
+	return fmt.Errorf("task %s is not running (status: %s)", taskID, task.Status.String())
 }

@@ -11,13 +11,14 @@ import (
 
 // Config 主配置结构
 type Config struct {
-	ServerID       string         `yaml:"server_id" json:"server_id"` // 服务器ID
-	API            APIConfig      `yaml:"api" json:"api"`
-	Proxy          ProxyConfig    `yaml:"proxy" json:"proxy"`
-	IPTables       IPTablesConfig `yaml:"iptables" json:"iptables"`
-	Logger         logger.Config  `yaml:"logger" json:"logger"`
-	UpdateInterval int            `yaml:"update_interval" json:"update_interval"` // 秒
-	LogLevel       string         `yaml:"log_level" json:"log_level"`
+	ServerID       string          `yaml:"server_id" json:"server_id"` // 服务器ID
+	API            APIConfig       `yaml:"api" json:"api"`
+	Proxy          ProxyConfig     `yaml:"proxy" json:"proxy"`
+	IPTables       IPTablesConfig  `yaml:"iptables" json:"iptables"`
+	Logger         logger.Config   `yaml:"logger" json:"logger"`
+	WebSocket      WebSocketConfig `yaml:"websocket" json:"websocket"`             // WebSocket配置
+	UpdateInterval int             `yaml:"update_interval" json:"update_interval"` // 秒
+	LogLevel       string          `yaml:"log_level" json:"log_level"`
 }
 
 // APIConfig API配置
@@ -57,6 +58,17 @@ type IPTablesConfig struct {
 	Enable      bool   `yaml:"enable" json:"enable"`
 	ChainPrefix string `yaml:"chain_prefix" json:"chain_prefix"`
 	BackupPath  string `yaml:"backup_path" json:"backup_path"`
+}
+
+// WebSocketConfig WebSocket配置
+type WebSocketConfig struct {
+	Enabled              bool   `yaml:"enabled" json:"enabled"`                               // 是否启用WebSocket
+	ServerURL            string `yaml:"server_url" json:"server_url"`                         // WebSocket服务器地址
+	AgentID              string `yaml:"agent_id" json:"agent_id"`                             // 代理ID
+	HeartbeatInterval    string `yaml:"heartbeat_interval" json:"heartbeat_interval"`         // 心跳间隔
+	MetricsInterval      string `yaml:"metrics_interval" json:"metrics_interval"`             // 监控数据上报间隔
+	ReconnectInterval    string `yaml:"reconnect_interval" json:"reconnect_interval"`         // 重连间隔
+	MaxReconnectAttempts int    `yaml:"max_reconnect_attempts" json:"max_reconnect_attempts"` // 最大重连次数（0表示无限）
 }
 
 // LoadConfig 从文件加载配置
@@ -165,6 +177,20 @@ func setDefaults(config *Config) {
 	}
 	if config.Logger.MaxAge == 0 {
 		config.Logger.MaxAge = 30
+	}
+
+	// WebSocket配置默认值
+	if config.WebSocket.HeartbeatInterval == "" {
+		config.WebSocket.HeartbeatInterval = "30s"
+	}
+	if config.WebSocket.MetricsInterval == "" {
+		config.WebSocket.MetricsInterval = "60s"
+	}
+	if config.WebSocket.ReconnectInterval == "" {
+		config.WebSocket.ReconnectInterval = "5s"
+	}
+	if config.WebSocket.AgentID == "" {
+		config.WebSocket.AgentID = "agent-001"
 	}
 }
 

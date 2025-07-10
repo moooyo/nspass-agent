@@ -50,3 +50,13 @@ logger:
 
 # 更新间隔（秒）
 update_interval: 300 
+
+# WebSocket配置
+websocket:
+  enabled: true
+  server_url: "ws://localhost:8080/ws"
+  agent_id: "agent-001"
+  heartbeat_interval: 30s
+  metrics_interval: 60s
+  reconnect_interval: 5s
+  max_reconnect_attempts: 0  # 0表示无限重试

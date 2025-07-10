@@ -16,4 +16,6 @@ This repo has some specific rules you must followed.
 5. If you find any API or model you want to use is not defined in the proto files, please add them in the appropriate proto file and regenerate the code using 'make gen-proto'.
 6. Always use 'make run' to run the application, which ensures that all dependencies are correctly set up and the application runs in the intended environment.
 
+We don't need any summarize doc to summarize your work, so please don't write any summary doc.
+
 Please always respond with Chinese.
