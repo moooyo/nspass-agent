@@ -353,9 +353,16 @@ func (h *DefaultTaskHandler) updateProxyConfig(ctx context.Context, params *mode
 func (h *DefaultTaskHandler) updateIPTablesConfig(ctx context.Context, params *model.ConfigUpdateTaskParams) (*model.TaskResult, error) {
 	h.log.Info("更新iptables配置")
 
-	// 这里应该根据配置内容更新iptables配置
-	// 实际实现需要解析配置并调用iptables管理器
-	output := fmt.Sprintf("iptables配置更新完成，配置类型: %s", params.ConfigType)
+	// 这里可以根据具体的配置类型来处理不同的更新逻辑
+	// 目前我们让agent通过常规的配置同步来处理iptables更新
+	
+	output := fmt.Sprintf("iptables配置更新请求已处理，配置类型: %s", params.ConfigType)
+	
+	// 如果需要重启，可以设置相应的标志
+	if params.RestartRequired {
+		output += "，需要重启服务"
+		h.log.Info("iptables配置更新需要重启服务")
+	}
 
 	return &model.TaskResult{
 		TaskId: "",

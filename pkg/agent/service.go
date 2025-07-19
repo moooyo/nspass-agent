@@ -257,7 +257,7 @@ func (s *Service) updateConfiguration() error {
 	}
 
 	// 更新iptables规则
-	if err := s.updateIPTablesRules(serverConfig); err != nil {
+	if err := s.updateIPTablesRulesFromProto(); err != nil {
 		updateErrors = append(updateErrors, fmt.Sprintf("更新iptables规则失败: %v", err))
 		logger.LogError(err, "更新iptables规则失败", logrus.Fields{
 			"server_id": s.serverID,
@@ -320,45 +320,21 @@ func (s *Service) updateProxyServices(serverConfig *api.ServerConfigData) error 
 	return s.proxyManager.UpdateProxies(proxyConfigs)
 }
 
-// updateIPTablesRules 更新iptables规则
-func (s *Service) updateIPTablesRules(serverConfig *api.ServerConfigData) error {
+// updateIPTablesRulesFromProto 使用proto配置更新iptables规则
+func (s *Service) updateIPTablesRulesFromProto() error {
 	log := logger.GetComponentLogger("agent-service")
 
-	// 从API获取iptables配置
-	iptablesConfigs, err := s.apiClient.GetServerIPTablesConfigs(s.serverID)
+	// 从API获取proto格式的iptables配置
+	iptablesConfigs, err := s.apiClient.GetServerIptablesConfigsProto(s.serverID)
 	if err != nil {
 		log.WithError(err).Error("获取iptables配置失败")
 		return fmt.Errorf("获取iptables配置失败: %w", err)
 	}
 
-	log.WithField("configs_count", len(iptablesConfigs.Configs)).Info("获取到iptables配置")
+	log.WithField("configs_count", len(iptablesConfigs)).Info("获取到iptables配置(proto)")
 
-	// 转换iptables配置为规则
-	var iptableRules []api.IPTableRule
-
-	for _, config := range iptablesConfigs.Configs {
-		if !config.IsEnabled {
-			log.WithField("config_id", config.ID).Debug("跳过已禁用的iptables配置")
-			continue
-		}
-
-		// 转换配置为规则
-		rule := api.ConvertIPTablesConfigToRule(config)
-		iptableRules = append(iptableRules, rule)
-
-		log.WithFields(logrus.Fields{
-			"config_id":   config.ID,
-			"config_name": config.ConfigName,
-			"table":       rule.Table,
-			"chain":       rule.Chain,
-			"rule":        rule.Rule,
-		}).Debug("转换iptables配置为规则")
-	}
-
-	log.WithField("total_rules", len(iptableRules)).Info("开始应用iptables规则")
-
-	// 应用规则
-	return s.iptablesManager.UpdateRules(iptableRules)
+	// 直接使用proto配置
+	return s.iptablesManager.UpdateRulesFromProto(iptablesConfigs)
 }
 
 // reportStatus 上报状态

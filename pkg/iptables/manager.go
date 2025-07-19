@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nspass/nspass-agent/generated/model"
 	"github.com/nspass/nspass-agent/pkg/api"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
@@ -32,7 +33,7 @@ type RuleSet map[string]*Rule // key: 规则的唯一标识符
 
 // ManagerInterface 定义iptables管理器接口
 type ManagerInterface interface {
-	UpdateRules(rules []api.IPTableRule) error
+	UpdateRulesFromProto(configs []*model.IptablesConfig) error
 	GetRulesSummary() map[string]interface{}
 }
 
@@ -94,8 +95,8 @@ func NewManager(cfg config.IPTablesConfig) ManagerInterface {
 	return manager
 }
 
-// UpdateRules 更新iptables规则 - 使用iptables-save/restore方式
-func (m *Manager) UpdateRules(rules []api.IPTableRule) error {
+// UpdateRulesFromProto 使用proto配置更新iptables规则
+func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 	if !m.config.Enable {
 		logger.GetIPTablesLogger().Info("iptables管理已禁用，跳过规则更新")
 		return nil
@@ -107,38 +108,50 @@ func (m *Manager) UpdateRules(rules []api.IPTableRule) error {
 	startTime := time.Now()
 	log := logger.GetIPTablesLogger()
 
-	log.WithField("rule_count", len(rules)).Info("开始更新iptables规则")
+	log.WithField("config_count", len(configs)).Info("使用proto配置更新iptables规则")
 
 	// 1. 备份当前规则
 	if err := m.backupCurrentRules(); err != nil {
 		logger.LogError(err, "备份当前规则失败", nil)
 	}
 
-	// 2. 转换API规则为内部规则格式
+	// 2. 转换proto配置为内部规则格式
 	newRules := make(map[string]*Rule)
 	enabledCount := 0
-	for _, apiRule := range rules {
-		if !apiRule.Enabled {
-			log.WithField("rule_id", apiRule.ID).Debug("跳过已禁用的规则")
+	for _, config := range configs {
+		if !config.IsEnabled {
+			log.WithField("config_id", config.Id).Debug("跳过已禁用的iptables配置")
 			continue
 		}
 
+		// 转换proto配置为规则参数
+		table, chain, ruleText := api.ConvertProtoIptablesConfigToRuleParts(config)
+
 		rule := &Rule{
-			ID:      apiRule.ID,
-			Table:   apiRule.Table,
-			Chain:   apiRule.Chain,
-			Rule:    apiRule.Rule,
-			Action:  apiRule.Action,
-			Enabled: apiRule.Enabled,
+			ID:      fmt.Sprintf("%d", config.Id),
+			Table:   table,
+			Chain:   chain,
+			Rule:    ruleText,
+			Action:  "add",
+			Enabled: config.IsEnabled,
 		}
+
 		newRules[rule.ID] = rule
 		enabledCount++
+
+		log.WithFields(logrus.Fields{
+			"config_id": config.Id,
+			"server_id": config.ServerId,
+			"table":     rule.Table,
+			"chain":     rule.Chain,
+			"rule":      rule.Rule,
+		}).Debug("转换proto iptables配置为规则")
 	}
 
 	log.WithFields(logrus.Fields{
-		"total_rules":   len(rules),
-		"enabled_rules": enabledCount,
-	}).Info("规则转换完成")
+		"total_configs":   len(configs),
+		"enabled_configs": enabledCount,
+	}).Info("配置转换完成")
 
 	// 3. 获取当前完整的iptables规则
 	currentRulesContent, err := m.getCurrentRulesContent()
@@ -175,11 +188,11 @@ func (m *Manager) UpdateRules(rules []api.IPTableRule) error {
 	duration := time.Since(startTime)
 
 	// 记录性能指标
-	logger.LogPerformance("iptables_rules_update", duration, logrus.Fields{
-		"rules_processed": len(rules),
-		"rules_enabled":   enabledCount,
-		"old_rules":       oldRulesCount,
-		"new_rules":       len(newRules),
+	logger.LogPerformance("iptables_rules_update_from_proto", duration, logrus.Fields{
+		"configs_processed": len(configs),
+		"configs_enabled":   enabledCount,
+		"old_rules":         oldRulesCount,
+		"new_rules":         len(newRules),
 	})
 
 	log.WithFields(logrus.Fields{

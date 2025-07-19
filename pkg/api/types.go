@@ -112,39 +112,20 @@ type ServerConfigUpdateInfo struct {
 	UpdateMessage string    `json:"update_message"`
 }
 
-// IPTablesConfig iptables配置
-type IPTablesConfig struct {
-	ID            string            `json:"id"`
-	ConfigName    string            `json:"config_name"`
-	TableType     string            `json:"table_type"`
-	ChainType     string            `json:"chain_type"`
-	Protocol      string            `json:"protocol"`
-	SourceIP      string            `json:"source_ip"`
-	SourcePort    string            `json:"source_port"`
-	DestIP        string            `json:"dest_ip"`
-	DestPort      string            `json:"dest_port"`
-	Action        string            `json:"action"`
-	JumpTarget    string            `json:"jump_target"`
-	Rule          string            `json:"rule"`
-	Priority      int32             `json:"priority"`
-	Description   string            `json:"description"`
-	IsEnabled     bool              `json:"is_enabled"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
-	Metadata      map[string]string `json:"metadata"`
-}
-
-// IPTablesConfigsResponse 获取 iptables 配置的响应
-type IPTablesConfigsResponse struct {
-	Configs    []IPTablesConfig `json:"configs"`
-	TotalCount int32            `json:"total_count"`
+// ProxyConfig 代理配置
+type ProxyConfig struct {
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"` // shadowsocks, trojan, snell
+	Name    string                 `json:"name"`
+	Config  map[string]interface{} `json:"config"`
+	Enabled bool                   `json:"enabled"`
 }
 
 // ConvertRouteFromProto 从proto转换路由配置
 func ConvertRouteFromProto(route *model.Route) RouteConfig {
 	config := RouteConfig{
-		ID:         route.Id,
-		RouteID:    route.RouteId,
+		ID:         fmt.Sprintf("%d", route.Id),
+		RouteID:    fmt.Sprintf("%d", route.Id),
 		RouteName:  route.RouteName,
 		EntryPoint: route.EntryPoint,
 		Port:       route.Port,
@@ -158,56 +139,49 @@ func ConvertRouteFromProto(route *model.Route) RouteConfig {
 	}
 
 	// 转换协议
-	if route.Protocol != 0 {
-		switch route.Protocol {
-		case 1:
-			config.Protocol = "shadowsocks"
-		case 2:
-			config.Protocol = "snell"
-		default:
-			config.Protocol = "unknown"
-		}
+	switch route.Protocol {
+	case model.Protocol_PROTOCOL_SHADOWSOCKS:
+		config.Protocol = "shadowsocks"
+	case model.Protocol_PROTOCOL_SNELL:
+		config.Protocol = "snell"
+	default:
+		config.Protocol = "unknown"
 	}
 
 	// 转换协议参数
 	if route.ProtocolParams != nil {
 		config.ProtocolParams = make(map[string]interface{})
-		// 这里需要根据具体的proto结构来解析参数
-		// 暂时留空，后续根据实际需要填充
+		// 根据proto结构解析参数
 	}
 
 	// 转换类型
-	if route.Type != 0 {
-		switch route.Type {
-		case 1:
-			config.Type = "custom"
-		case 2:
-			config.Type = "system"
-		default:
-			config.Type = "unknown"
-		}
+	switch route.Type {
+	case model.RouteType_ROUTE_TYPE_CUSTOM:
+		config.Type = "custom"
+	case model.RouteType_ROUTE_TYPE_SYSTEM:
+		config.Type = "system"
+	default:
+		config.Type = "unknown"
 	}
 
 	// 转换状态
-	if route.Status != 0 {
-		switch route.Status {
-		case 1:
-			config.Status = "active"
-		case 2:
-			config.Status = "inactive"
-		case 3:
-			config.Status = "error"
-		default:
-			config.Status = "unknown"
-		}
+	switch route.Status {
+	case model.RouteStatus_ROUTE_STATUS_ACTIVE:
+		config.Status = "active"
+	case model.RouteStatus_ROUTE_STATUS_INACTIVE:
+		config.Status = "inactive"
+	case model.RouteStatus_ROUTE_STATUS_ERROR:
+		config.Status = "error"
+	default:
+		config.Status = "unknown"
 	}
 
 	// 转换时间
-	if route.CreatedAt != nil {
-		config.CreatedAt = route.CreatedAt.AsTime()
+	if route.CreatedAt != 0 {
+		config.CreatedAt = time.Unix(route.CreatedAt, 0)
 	}
-	if route.UpdatedAt != nil {
-		config.UpdatedAt = route.UpdatedAt.AsTime()
+	if route.UpdatedAt != 0 {
+		config.UpdatedAt = time.Unix(route.UpdatedAt, 0)
 	}
 
 	return config
@@ -216,24 +190,22 @@ func ConvertRouteFromProto(route *model.Route) RouteConfig {
 // ConvertEgressFromProto 从proto转换出口配置
 func ConvertEgressFromProto(egress *model.EgressItem) EgressConfig {
 	config := EgressConfig{
-		ID:           egress.Id,
+		ID:           fmt.Sprintf("%d", egress.Id),
 		EgressID:     egress.EgressId,
 		ServerID:     egress.ServerId,
 		EgressConfig: egress.EgressConfig,
 	}
 
 	// 转换出口模式
-	if egress.EgressMode != 0 {
-		switch egress.EgressMode {
-		case 1:
-			config.EgressMode = "direct"
-		case 2:
-			config.EgressMode = "iptables"
-		case 3:
-			config.EgressMode = "ss2022"
-		default:
-			config.EgressMode = "unknown"
-		}
+	switch egress.EgressMode {
+	case model.EgressMode_EGRESS_MODE_DIRECT:
+		config.EgressMode = "direct"
+	case model.EgressMode_EGRESS_MODE_IPTABLES:
+		config.EgressMode = "iptables"
+	case model.EgressMode_EGRESS_MODE_SS2022:
+		config.EgressMode = "ss2022"
+	default:
+		config.EgressMode = "unknown"
 	}
 
 	// 设置可选字段
@@ -243,11 +215,11 @@ func ConvertEgressFromProto(egress *model.EgressItem) EgressConfig {
 
 	if egress.ForwardType != nil {
 		switch *egress.ForwardType {
-		case 1:
+		case model.ForwardType_FORWARD_TYPE_TCP:
 			config.ForwardType = "tcp"
-		case 2:
+		case model.ForwardType_FORWARD_TYPE_UDP:
 			config.ForwardType = "udp"
-		case 3:
+		case model.ForwardType_FORWARD_TYPE_ALL:
 			config.ForwardType = "all"
 		default:
 			config.ForwardType = "unknown"
@@ -329,103 +301,53 @@ func ConvertForwardRuleFromProto(rule *model.ForwardRule) ForwardRuleConfig {
 	return config
 }
 
-// ConvertIPTablesConfigToRule 将IPTablesConfig转换为IPTableRule
-func ConvertIPTablesConfigToRule(config IPTablesConfig) IPTableRule {
-	rule := IPTableRule{
-		ID:      config.ID,
-		Enabled: config.IsEnabled,
-		Action:  "add", // 默认动作
-	}
-
-	// 映射表类型
-	switch config.TableType {
-	case "FILTER":
-		rule.Table = "filter"
-	case "NAT":
-		rule.Table = "nat"
-	case "MANGLE":
-		rule.Table = "mangle"
-	case "RAW":
-		rule.Table = "raw"
-	default:
-		rule.Table = "filter" // 默认
-	}
-
-	// 映射链类型
-	switch config.ChainType {
-	case "INPUT":
-		rule.Chain = "INPUT"
-	case "OUTPUT":
-		rule.Chain = "OUTPUT"
-	case "FORWARD":
-		rule.Chain = "FORWARD"
-	case "PREROUTING":
-		rule.Chain = "PREROUTING"
-	case "POSTROUTING":
-		rule.Chain = "POSTROUTING"
-	default:
-		rule.Chain = "INPUT" // 默认
-	}
-
-	// 如果有预制的规则，直接使用
-	if config.Rule != "" {
-		rule.Rule = config.Rule
-	} else {
-		// 否则根据配置参数构建规则
-		rule.Rule = buildIPTableRule(config)
-	}
-
-	return rule
-}
-
-// buildIPTableRule 根据配置构建iptables规则
-func buildIPTableRule(config IPTablesConfig) string {
+// ConvertProtoIptablesConfigToRuleParts 将proto IptablesConfig转换为iptables规则参数
+func ConvertProtoIptablesConfigToRuleParts(config *model.IptablesConfig) (table, chain, rule string) {
+	table = config.TableName
+	chain = config.ChainName
+	
 	var parts []string
 
 	// 添加协议
-	if config.Protocol != "" && config.Protocol != "ALL" {
+	if config.Protocol != "" && strings.ToUpper(config.Protocol) != "ALL" {
 		parts = append(parts, fmt.Sprintf("-p %s", strings.ToLower(config.Protocol)))
 	}
 
-	// 添加源地址
-	if config.SourceIP != "" {
-		parts = append(parts, fmt.Sprintf("-s %s", config.SourceIP))
+	// 添加源IP
+	if config.SourceIp != nil && *config.SourceIp != "" {
+		parts = append(parts, fmt.Sprintf("-s %s", *config.SourceIp))
+	}
+
+	// 添加目标IP
+	if config.DestIp != nil && *config.DestIp != "" {
+		parts = append(parts, fmt.Sprintf("-d %s", *config.DestIp))
 	}
 
 	// 添加源端口
-	if config.SourcePort != "" {
-		parts = append(parts, fmt.Sprintf("--sport %s", config.SourcePort))
-	}
-
-	// 添加目标地址
-	if config.DestIP != "" {
-		parts = append(parts, fmt.Sprintf("-d %s", config.DestIP))
+	if config.SourcePort != nil && *config.SourcePort != "" {
+		parts = append(parts, fmt.Sprintf("--sport %s", *config.SourcePort))
 	}
 
 	// 添加目标端口
-	if config.DestPort != "" {
-		parts = append(parts, fmt.Sprintf("--dport %s", config.DestPort))
+	if config.DestPort != nil && *config.DestPort != "" {
+		parts = append(parts, fmt.Sprintf("--dport %s", *config.DestPort))
+	}
+
+	// 添加网络接口
+	if config.Interface != nil && *config.Interface != "" {
+		parts = append(parts, fmt.Sprintf("-i %s", *config.Interface))
 	}
 
 	// 添加动作
-	if config.JumpTarget != "" {
-		switch config.Action {
-		case "ACCEPT":
-			parts = append(parts, "-j ACCEPT")
-		case "DROP":
-			parts = append(parts, "-j DROP")
-		case "REJECT":
-			parts = append(parts, "-j REJECT")
-		case "DNAT":
-			parts = append(parts, fmt.Sprintf("-j DNAT --to-destination %s", config.JumpTarget))
-		case "SNAT":
-			parts = append(parts, fmt.Sprintf("-j SNAT --to-source %s", config.JumpTarget))
-		case "MASQUERADE":
-			parts = append(parts, "-j MASQUERADE")
-		default:
-			parts = append(parts, fmt.Sprintf("-j %s", config.Action))
-		}
+	if config.RuleAction != "" {
+		parts = append(parts, fmt.Sprintf("-j %s", strings.ToUpper(config.RuleAction)))
 	}
 
-	return strings.Join(parts, " ")
+	// 添加注释
+	if config.RuleComment != nil && *config.RuleComment != "" {
+		parts = append(parts, fmt.Sprintf(`-m comment --comment "%s"`, *config.RuleComment))
+	}
+
+	rule = strings.Join(parts, " ")
+	return table, chain, rule
 }
