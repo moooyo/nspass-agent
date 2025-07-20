@@ -29,16 +29,16 @@ NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控�
 # 基础安装（安装后需要手动配置）
 curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash
 
-# 带参数安装（推荐，使用预设环境）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=your-server-id --token=your-api-token --env=production
+# 带参数安装（推荐，超简洁格式）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid your-server-id -token your-api-token -env production
 ```
 
 **参数说明：**
-- `--server-id`: 服务器唯一标识符
-- `--token`: API 访问令牌
-- `--base-url`: API 基础地址（手动指定 API 地址）
-- `--env`: 预设环境名称（production|staging|testing|development）
-- `--help`: 显示帮助信息
+- `-sid`: 服务器唯一标识符（短格式）
+- `-token`: API 访问令牌（短格式）
+- `-endpoint`: API 基础地址（短格式，手动指定）
+- `-env`: 预设环境名称（短格式：production|staging|testing|development）
+- `-h`: 显示帮助信息
 
 **预设环境：**
 - `production`: https://api.nspass.com（生产环境）
@@ -46,22 +46,32 @@ curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/ins
 - `testing`: https://test-api.nspass.com（测试环境）
 - `development`: https://dev-api.nspass.com（开发环境）
 
-> ⚠️ **重要提示**: 必须指定 `--base-url` 或 `--env` 参数之一。推荐使用 `--env` 参数选择预设环境。
+> ⚠️ **重要提示**: 必须指定 `-endpoint` 或 `-env` 参数之一（或使用位置参数）。推荐使用 `-env` 参数选择预设环境。
 
 **使用示例：**
+
+| 格式 | 命令 | 说明 |
+|------|------|------|
+| **超简洁（推荐）** | `curl -sSL install-url \| sudo bash -s -- -sid server001 -token abc123 -env production` | 使用短参数，最直观 |
+| **位置参数** | `curl -sSL install-url \| sudo bash -s server001 abc123 production` | 最短命令，按顺序传参 |
+| **自定义端点** | `curl -sSL install-url \| sudo bash -s -- -sid server001 -token abc123 -endpoint https://api.custom.com` | 指定自定义API地址 |
+
 ```bash
-# 使用预设环境安装（推荐）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=production
+# 1. 超简洁格式（推荐）- 使用短参数
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env production
 
-# 手动指定 API 地址安装
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --base-url=https://api.nspass.com
+# 2. 位置参数格式（最短）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s server001 abc123def456 production
 
-# 其他预设环境
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=staging
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=testing
+# 3. 其他环境安装
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env staging
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env testing
 
-# 查看安装脚本帮助
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --help
+# 4. 自定义 API 端点
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
+
+# 5. 查看帮助
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- -h
 ```
 
 ### 手动下载安装

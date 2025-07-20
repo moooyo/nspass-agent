@@ -60,13 +60,18 @@ show_help() {
     echo ""
     echo "使用方法:"
     echo "  $0 [选项]"
+    echo "  $0 <server-id> <token> <env>                 # 位置参数"
+    echo ""
+    echo "简化格式示例："
+    echo "  $0 server001 your-api-token production       # 位置参数"
+    echo "  $0 -sid server001 -token your-token -env production    # 短参数"
     echo ""
     echo "选项:"
-    echo "  --server-id=<id>     设置服务器ID"
-    echo "  --token=<token>      设置API令牌"
-    echo "  --base-url=<url>     设置API基础URL"
-    echo "  --env=<environment>  使用预设环境 (production|staging|testing|development)"
-    echo "  --help               显示此帮助信息"
+    echo "  -sid, --server-id <id>     设置服务器ID"
+    echo "  -token, --token <token>    设置API令牌"
+    echo "  -endpoint, --base-url <url>  设置API基础URL"
+    echo "  -env, --env <environment>  使用预设环境 (production|staging|testing|development)"
+    echo "  -h, --help                 显示此帮助信息"
     echo ""
     echo "预设环境："
     echo "  production   - https://api.nspass.com"
@@ -75,36 +80,62 @@ show_help() {
     echo "  development  - https://dev-api.nspass.com"
     echo ""
     echo "示例:"
-    echo "  $0 --server-id=server001 --token=your-api-token --base-url=https://api.nspass.com"
-    echo "  $0 --server-id=server001 --token=your-api-token --env=production"
+    echo "  $0 server001 your-token production                           # 位置参数"
+    echo "  $0 -sid server001 -token your-token -env production          # 短参数"
+    echo "  $0 -sid server001 -token your-token -endpoint https://api.nspass.com  # 自定义端点"
     echo ""
     echo "远程安装:"
-    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token --base-url=https://api.nspass.com"
-    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token --env=production"
+    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s server001 your-token production"
+    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- -sid server001 -token your-token -env production"
     echo ""
 }
 
 # 解析命令行参数
 parse_args() {
+    # 简化参数解析：支持位置参数
+    if [ $# -eq 3 ] && [[ "$1" != -* ]] && [[ "$2" != -* ]] && [[ "$3" != -* ]]; then
+        SERVER_ID="$1"
+        API_TOKEN="$2"
+        ENV_PRESET="$3"
+        return
+    fi
+    
+    # 支持短参数和长参数
     while [[ $# -gt 0 ]]; do
         case $1 in
+            -sid|--server-id)
+                SERVER_ID="$2"
+                shift 2
+                ;;
             --server-id=*)
                 SERVER_ID="${1#*=}"
                 shift
+                ;;
+            -token|--token)
+                API_TOKEN="$2"
+                shift 2
                 ;;
             --token=*)
                 API_TOKEN="${1#*=}"
                 shift
                 ;;
+            -endpoint|--base-url)
+                API_BASE_URL="$2"
+                shift 2
+                ;;
             --base-url=*)
                 API_BASE_URL="${1#*=}"
                 shift
+                ;;
+            -env|--env)
+                ENV_PRESET="$2"
+                shift 2
                 ;;
             --env=*)
                 ENV_PRESET="${1#*=}"
                 shift
                 ;;
-            --help)
+            -h|--help)
                 show_help
                 exit 0
                 ;;
