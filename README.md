@@ -29,19 +29,36 @@ NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控�
 # 基础安装（安装后需要手动配置）
 curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash
 
-# 带参数安装（推荐，直接配置服务器 ID 和令牌）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=your-server-id --token=your-api-token
+# 带参数安装（推荐，使用预设环境）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=your-server-id --token=your-api-token --env=production
 ```
 
 **参数说明：**
 - `--server-id`: 服务器唯一标识符
 - `--token`: API 访问令牌
+- `--base-url`: API 基础地址（手动指定 API 地址）
+- `--env`: 预设环境名称（production|staging|testing|development）
 - `--help`: 显示帮助信息
+
+**预设环境：**
+- `production`: https://api.nspass.com（生产环境）
+- `staging`: https://staging-api.nspass.com（预发布环境）
+- `testing`: https://test-api.nspass.com（测试环境）
+- `development`: https://dev-api.nspass.com（开发环境）
+
+> ⚠️ **重要提示**: 必须指定 `--base-url` 或 `--env` 参数之一。推荐使用 `--env` 参数选择预设环境。
 
 **使用示例：**
 ```bash
-# 安装并配置
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456
+# 使用预设环境安装（推荐）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=production
+
+# 手动指定 API 地址安装
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --base-url=https://api.nspass.com
+
+# 其他预设环境
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=staging
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456 --env=testing
 
 # 查看安装脚本帮助
 curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --help
@@ -93,7 +110,7 @@ server:
   
 # API 配置
 api:
-  base_url: "https://api.nspass.com"
+  base_url: "https://api.nspass.com"  # 根据实际环境修改
   token: "your-api-token"
   timeout: 30s
   

@@ -56,6 +56,7 @@ deep-clean: clean proto-clean
 	@echo "深度清理项目..."
 	@rm -rf build/
 	@rm -rf dist/
+	@rm -rf release/
 	@rm -rf $(GENERATED_DIR)
 	@go clean -cache
 	@go clean -modcache

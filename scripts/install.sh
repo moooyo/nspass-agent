@@ -4,7 +4,7 @@
 # 使用方法: 
 #   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
 #   或
-#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token
+#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token --base-url=https://api.nspass.com
 
 set -e
 
@@ -19,6 +19,16 @@ SERVICE_NAME="nspass-agent"
 # 配置参数
 SERVER_ID=""
 API_TOKEN=""
+API_BASE_URL=""
+ENV_PRESET=""
+
+# 预设环境 API 地址
+PRESET_URLS=(
+    "production:https://api.nspass.com"
+    "staging:https://staging-api.nspass.com"  
+    "testing:https://test-api.nspass.com"
+    "development:https://dev-api.nspass.com"
+)
 
 # 颜色输出
 RED='\033[0;31m'
@@ -54,13 +64,23 @@ show_help() {
     echo "选项:"
     echo "  --server-id=<id>     设置服务器ID"
     echo "  --token=<token>      设置API令牌"
+    echo "  --base-url=<url>     设置API基础URL"
+    echo "  --env=<environment>  使用预设环境 (production|staging|testing|development)"
     echo "  --help               显示此帮助信息"
     echo ""
+    echo "预设环境："
+    echo "  production   - https://api.nspass.com"
+    echo "  staging      - https://staging-api.nspass.com"
+    echo "  testing      - https://test-api.nspass.com" 
+    echo "  development  - https://dev-api.nspass.com"
+    echo ""
     echo "示例:"
-    echo "  $0 --server-id=server001 --token=your-api-token"
+    echo "  $0 --server-id=server001 --token=your-api-token --base-url=https://api.nspass.com"
+    echo "  $0 --server-id=server001 --token=your-api-token --env=production"
     echo ""
     echo "远程安装:"
-    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token"
+    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token --base-url=https://api.nspass.com"
+    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=server001 --token=your-token --env=production"
     echo ""
 }
 
@@ -76,6 +96,14 @@ parse_args() {
                 API_TOKEN="${1#*=}"
                 shift
                 ;;
+            --base-url=*)
+                API_BASE_URL="${1#*=}"
+                shift
+                ;;
+            --env=*)
+                ENV_PRESET="${1#*=}"
+                shift
+                ;;
             --help)
                 show_help
                 exit 0
@@ -89,15 +117,34 @@ parse_args() {
     done
 }
 
+# 解析环境预设
+parse_env_preset() {
+    if [ -n "$ENV_PRESET" ]; then
+        for preset in "${PRESET_URLS[@]}"; do
+            env_name="${preset%%:*}"
+            env_url="${preset#*:}"
+            if [ "$env_name" = "$ENV_PRESET" ]; then
+                API_BASE_URL="$env_url"
+                print_info "使用预设环境: $ENV_PRESET -> $API_BASE_URL"
+                return 0
+            fi
+        done
+        print_error "未知的预设环境: $ENV_PRESET"
+        print_error "支持的预设环境: production, staging, testing, development"
+        exit 1
+    fi
+}
+
 # 验证参数
 validate_args() {
-    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ] && [ -n "$API_BASE_URL" ]; then
         print_info "使用提供的配置参数:"
         print_info "  服务器ID: $SERVER_ID"
         print_info "  API令牌: ${API_TOKEN:0:10}..."
+        print_info "  API基础URL: $API_BASE_URL"
         return 0
-    elif [ -n "$SERVER_ID" ] || [ -n "$API_TOKEN" ]; then
-        print_error "server-id 和 token 参数必须同时提供"
+    elif [ -n "$SERVER_ID" ] || [ -n "$API_TOKEN" ] || [ -n "$API_BASE_URL" ]; then
+        print_error "server-id、token 和 base-url 参数必须同时提供"
         show_help
         exit 1
     else
@@ -423,11 +470,13 @@ setup_config() {
     # 确定配置参数
     local config_server_id="your-server-id-here"
     local config_api_token="your-api-token-here"
+    local config_base_url="https://api.nspass.com"
     local config_created=false
     
-    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+    if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ] && [ -n "$API_BASE_URL" ]; then
         config_server_id="$SERVER_ID"
         config_api_token="$API_TOKEN"
+        config_base_url="$API_BASE_URL"
         print_info "使用提供的配置参数"
     fi
     
@@ -443,7 +492,7 @@ server_id: "$config_server_id"
 
 # API配置
 api:
-  base_url: "https://api.nspass.com"
+  base_url: "$config_base_url"
   token: "$config_api_token"
   timeout: 30
   retry_count: 3
@@ -491,11 +540,12 @@ EOF
         config_created=true
         print_info "配置文件已创建: $CONFIG_DIR/config.yaml"
         
-        if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ]; then
+        if [ -n "$SERVER_ID" ] && [ -n "$API_TOKEN" ] && [ -n "$API_BASE_URL" ]; then
             print_info "✓ 已设置服务器ID: $SERVER_ID"
             print_info "✓ 已设置API令牌: ${API_TOKEN:0:10}..."
+            print_info "✓ 已设置API基础URL: $API_BASE_URL"
         else
-            print_warn "⚠️  请编辑配置文件设置正确的 server_id 和 api.token"
+            print_warn "⚠️  请编辑配置文件设置正确的 server_id、api.token 和 api.base_url"
         fi
     else
         print_info "配置文件已存在，保持原有配置"
@@ -728,6 +778,9 @@ main() {
     
     # 解析命令行参数
     parse_args "$@"
+    
+    # 解析环境预设
+    parse_env_preset
     
     # 验证参数
     validate_args

@@ -30,6 +30,7 @@ go.work.sum
 # Build output
 dist/
 build/
+release/
 
 # Generated proto files
 generated/
@@ -58,12 +59,14 @@ Thumbs.db
 # 日志文件
 *.log
 logs/
+test/logs/
 
 # 临时文件
 *.tmp
 *.temp
 .tmp/
 .temp/
+test/
 
 # 配置文件（包含敏感信息）
 config.local.yaml
