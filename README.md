@@ -1,421 +1,286 @@
 # NSPass Agent
 
-NSPass Agent 是一个高性能的Linux系统代理服务管理程序，支持多种代理协议、智能防火墙管理和企业级监控功能。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/nspass/nspass-agent)](https://github.com/nspass/nspass-agent)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/nspass/nspass-agent/build.yml)](https://github.com/nspass/nspass-agent/actions)
+[![Release](https://img.shields.io/github/v/release/nspass/nspass-agent)](https://github.com/nspass/nspass-agent/releases)
+
+NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控各种代理服务（如 Shadowsocks、Trojan、Snell 等）。它提供了统一的接口来管理多种代理协议，并支持实时监控、流量统计、规则管理等功能。
 
 ## ✨ 核心特性
 
-### 🌐 **多协议代理支持**
-- **Shadowsocks**: 基于shadowsocks-libev的高性能实现
-- **Trojan**: 支持最新版本的Trojan代理协议
-- **Snell**: 高速的Snell代理服务器支持
-- **插件化架构**: 易于扩展支持更多代理协议
-
-### 🔄 **智能进程监控** ⭐️ **NEW**
-- **实时健康检查**: 定时检测代理进程运行状态
-- **自动故障恢复**: 检测到进程崩溃时自动重启
-- **智能重启策略**: 冷却期保护和重启次数限制
-- **并发监控**: 支持同时监控多个代理进程
-- **详细统计**: 重启历史、性能指标、状态分布
-- **灵活配置**: 支持不同环境的差异化监控策略
-
-### 🔧 **API驱动配置**
-- **动态配置**: 从REST API自动获取和同步配置
-- **智能重试**: 内置重试机制确保配置同步可靠性
-- **版本管理**: 支持配置版本控制和回滚
-- **实时更新**: 支持配置热更新无需重启服务
-
-### 🛡️ **IPTables防火墙管理**
-- **智能规则管理**: 基于iptables-save/restore的高效操作
-- **原子性更新**: 确保规则更新的原子性和一致性
-- **自动备份**: 自动备份和恢复防火墙规则
-- **增量同步**: 智能对比和增量更新规则
-
-### 📊 **企业级日志系统**
-- **结构化日志**: 基于JSON格式的结构化日志输出
-- **自动轮转**: 基于时间、大小的智能日志轮转
-- **组件隔离**: 每个组件独立的日志命名空间
-- **性能监控**: 内置性能指标和审计日志
-- **多输出支持**: 同时输出到文件和控制台
-
-### 🏗️ **生产就绪架构**
-- **Systemd集成**: 完整的systemd服务文件和管理脚本
-- **优雅关闭**: 支持信号处理和优雅关闭流程
-- **健康检查**: 内置健康检查和状态监控接口
-- **配置验证**: 启动时自动验证配置文件合法性
-- **错误恢复**: 完善的错误处理和自动恢复机制
-
-## 🎯 监控框架亮点
-
-### 实时监控能力
-```yaml
-proxy:
-  monitor:
-    enable: true          # 启用监控
-    check_interval: 30    # 30秒检查间隔
-    restart_cooldown: 60  # 60秒重启冷却
-    max_restarts: 10      # 每小时最多10次重启
-    health_timeout: 5     # 5秒健康检查超时
-```
-
-### 智能故障恢复
-- 🔍 **进程状态检测**: 定时检查所有代理进程健康状态
-- ⚡ **快速故障恢复**: 检测到崩溃后立即自动重启
-- 🛡️ **防护机制**: 冷却期和频率限制防止频繁重启
-- 📈 **统计分析**: 详细的重启历史和性能统计
-
-### 环境自适应配置
-- **开发环境**: 快速检测(10s)，宽松重启策略(20次/小时)
-- **生产环境**: 稳定优先(60s)，保守重启策略(5次/小时)  
-- **高可用环境**: 平衡策略(15s)，适中重启限制(15次/小时)
-
-## 📋 系统要求
-
-- **操作系统**: Linux (Ubuntu 18.04+, CentOS 7+, Debian 9+)
-- **Go版本**: Go 1.24+ (构建时)
-- **系统权限**: root权限 (用于iptables和systemd操作)
-- **依赖包**: iptables, systemctl
-- **网络**: 能够访问配置API服务器
+- 🔗 **多协议支持**: 支持 Shadowsocks、Trojan、Snell 等多种代理协议
+- 📊 **实时监控**: WebSocket 连接实时收集和上报系统监控数据
+- 🛡️ **防火墙管理**: 自动管理 iptables 规则，支持流量转发和过滤
+- 📈 **流量统计**: 详细的流量统计和历史记录
+- 🔄 **动态配置**: 支持远程配置更新，无需重启服务
+- 🚀 **高性能**: 基于 Go 语言开发，支持高并发处理
+- 📱 **REST API**: 提供完整的 REST API 接口
+- 🔐 **安全认证**: 支持 Token 认证和 TLS 加密
+- 🔧 **易于部署**: 单二进制文件，支持 systemd 服务管理
 
 ## 🚀 快速开始
 
-### 1. 自动安装（推荐）
-```bash
-# 使用 curl 一键安装
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
+### 一键安装（推荐）
 
-# 或使用 wget
-wget -qO- https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
+使用我们的自动安装脚本，只需一条命令即可完成安装：
+
+```bash
+# 基础安装（安装后需要手动配置）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash
+
+# 带参数安装（推荐，直接配置服务器 ID 和令牌）
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=your-server-id --token=your-api-token
 ```
 
-### 2. 配置服务
-编辑主配置文件：
+**参数说明：**
+- `--server-id`: 服务器唯一标识符
+- `--token`: API 访问令牌
+- `--help`: 显示帮助信息
+
+**使用示例：**
 ```bash
-sudo nano /etc/nspass/config.yaml
+# 安装并配置
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- --server-id=server001 --token=abc123def456
+
+# 查看安装脚本帮助
+curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --help
 ```
 
-配置示例：
+### 手动下载安装
+
+如果您偏好手动安装，可以从 GitHub Releases 下载预编译的二进制文件：
+
+```bash
+# 1. 下载最新版本（以 Linux AMD64 为例）
+curl -L https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz -o nspass-agent.tar.gz
+
+# 2. 解压
+tar -xzf nspass-agent.tar.gz
+
+# 3. 安装到系统路径
+sudo cp nspass-agent-linux-amd64 /usr/local/bin/nspass-agent
+sudo chmod +x /usr/local/bin/nspass-agent
+
+# 4. 创建配置目录
+sudo mkdir -p /etc/nspass
+
+# 5. 创建日志目录
+sudo mkdir -p /var/log/nspass
+
+# 6. 下载示例配置文件
+sudo curl -L https://raw.githubusercontent.com/nspass/nspass-agent/main/configs/config.yaml -o /etc/nspass/config.yaml
+```
+
+### 支持的系统架构
+
+| 操作系统 | 架构 | 下载链接 |
+|---------|------|----------|
+| Linux | x86_64 (AMD64) | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz) |
+| Linux | ARM64 | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-arm64.tar.gz) |
+| Linux | ARM | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-arm.tar.gz) |
+
+## ⚙️ 配置
+
+### 基本配置
+
+编辑配置文件 `/etc/nspass/config.yaml`：
+
 ```yaml
-# 服务器标识
-server_id: "your-server-id-here"
-
+# 服务器配置
+server:
+  id: "your-server-id"          # 服务器唯一标识
+  
 # API 配置
 api:
   base_url: "https://api.nspass.com"
-  token: "your-api-token-here"
-
+  token: "your-api-token"
+  timeout: 30s
+  
 # 代理配置
 proxy:
   enabled_types: ["shadowsocks", "trojan", "snell"]
-  auto_start: true
+  port_range:
+    start: 10000
+    end: 65535
+    
+# 监控配置
+monitor:
+  interval: 30s
+  enabled: true
   
-  # 进程监控
-  monitor:
-    enable: true
-    check_interval: 30
-    max_restarts: 10
-
-# 防火墙管理
-iptables:
-  enable: true
-  chain_prefix: "NSPASS"
-
 # 日志配置
-logger:
+log:
   level: "info"
-  format: "json"
-  output: "both"
+  file: "/var/log/nspass/agent.log"
+  max_size: 100
+  max_backups: 5
+  max_age: 7
 ```
 
-### 3. 启动服务
+### 高级配置
+
+查看 [配置文档](docs/installation.md) 了解更多配置选项。
+
+## 🛠️ 服务管理
+
+### 启动服务
+
 ```bash
-# 启动并启用服务
+# 启动服务
 sudo systemctl start nspass-agent
+
+# 开机自启
 sudo systemctl enable nspass-agent
 
-# 查看服务状态
+# 查看状态
 sudo systemctl status nspass-agent
+```
+
+### 服务操作
+
+```bash
+# 重启服务
+sudo systemctl restart nspass-agent
+
+# 停止服务
+sudo systemctl stop nspass-agent
 
 # 查看日志
 sudo journalctl -u nspass-agent -f
+
+# 查看详细日志
+sudo tail -f /var/log/nspass/agent.log
 ```
 
-## 📁 配置文件
+### 命令行使用
 
-项目提供了精简的配置文件：
-
-- **`configs/config.yaml`** - 主配置文件，包含所有功能的完整配置
-- **`configs/config-with-monitor.yaml`** - 包含详细监控配置的示例
-
-## 🔧 本地开发
-
-### 构建项目
 ```bash
-# 克隆项目
+# 查看版本信息
+nspass-agent version
+
+# 检查配置文件
+nspass-agent config check
+
+# 以调试模式运行（前台）
+nspass-agent run --log-level=debug
+
+# 指定配置文件
+nspass-agent run --config=/path/to/config.yaml
+```
+
+## 🔧 开发和构建
+
+### 环境要求
+
+- Go 1.24 或更高版本
+- Protocol Buffers 编译器（protoc）
+- Make 工具
+
+### 从源码构建
+
+```bash
+# 1. 克隆仓库
 git clone https://github.com/nspass/nspass-agent.git
 cd nspass-agent
 
-# 安装依赖
-make deps
+# 2. 安装依赖
+go mod download
 
-# 构建项目
+# 3. 生成 protobuf 文件
+make gen-proto
+
+# 4. 构建
 make build
 
-# 运行测试
-make test
+# 5. 运行（开发模式）
+make run
 ```
 
-### 清理项目
+### 可用的 Make 命令
+
 ```bash
-# 基础清理
-make clean
-
-# 深度清理（包括生成代码和缓存）
-make deep-clean
+make build        # 构建二进制文件
+make run          # 运行应用
+make test         # 运行测试
+make gen-proto    # 生成 protobuf 文件
+make clean        # 清理构建文件
+make lint         # 代码检查
+make format       # 格式化代码
+make release      # 构建发布版本
 ```
 
-## 📖 详细文档
+## 📚 API 文档
 
-- [日志系统使用指南](docs/logger-usage.md)
-- [代理监控框架](docs/proxy-monitor.md)
-- [IPTables管理说明](docs/iptables-persistent.md)
-- [配置文件参考](configs/config-with-monitor.yaml)
+NSPass Agent 提供完整的 REST API 接口，支持：
 
-## ⚙️ 配置示例
+- 代理服务管理
+- 系统状态监控
+- 流量统计查询
+- 配置管理
+- 健康检查
 
-### 完整配置示例
-参见: [configs/config-with-monitor.yaml](configs/config-with-monitor.yaml)
+详细的 API 文档请参考：[API 文档](docs/)
 
-### 监控配置示例
-```yaml
-# 开发环境
-proxy:
-  monitor:
-    enable: true
-    check_interval: 10      # 快速检测
-    restart_cooldown: 30    # 短冷却期
-    max_restarts: 20        # 宽松策略
+## 🔐 安全特性
 
-# 生产环境
-proxy:
-  monitor:
-    enable: true
-    check_interval: 60      # 稳定优先
-    restart_cooldown: 120   # 保守策略
-    max_restarts: 5         # 严格限制
-```
+- **Token 认证**: 所有 API 调用都需要有效的认证令牌
+- **TLS 加密**: 支持 HTTPS 和 WSS 加密通信
+- **权限控制**: 基于角色的访问控制
+- **审计日志**: 完整的操作审计日志记录
+- **防火墙集成**: 自动管理防火墙规则
 
-## 📊 监控和维护
+## 📊 监控功能
 
-### 监控指标
-- 代理进程状态和运行时间
-- 重启次数和成功率统计
-- 健康检查耗时和超时次数
-- 配置同步频率和错误率
+### 系统监控
 
-### 故障排查
-```bash
-# 查看监控状态
-curl localhost:8080/api/monitor/status
+- CPU 使用率
+- 内存使用情况
+- 磁盘空间使用
+- 网络流量统计
+- 进程状态监控
 
-# 检查代理状态
-sudo systemctl status nspass-agent
+### 代理监控
 
-# 查看详细日志
-sudo journalctl -u nspass-agent --no-pager -l
-```
+- 连接数统计
+- 流量使用情况
+- 延迟监控
+- 错误率统计
+- 服务可用性
 
-## 🤝 贡献指南
+## 📖 文档
 
-我们欢迎社区贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解贡献流程。
+- [安装指南](docs/installation.md)
+- [配置说明](docs/installation.md)
+- [API 文档](docs/)
+- [故障排除](docs/)
+- [开发指南](docs/)
 
-### 开发规范
-- 遵循Go代码规范
-- 添加充分的单元测试
-- 更新相关文档
-- 提交前运行完整测试
+## 🤝 贡献
+
+我们欢迎社区贡献！请阅读我们的贡献指南：
+
+1. Fork 项目
+2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 打开 Pull Request
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+本项目采用 MIT 许可证 - 详情请查看 [LICENSE](LICENSE) 文件。
 
-## 🆘 支持
+## 💬 支持
 
-- **文档**: [在线文档](https://nspass.github.io/nspass-agent/)
-- **Issues**: [GitHub Issues](https://github.com/nspass/nspass-agent/issues)
-- **讨论**: [GitHub Discussions](https://github.com/nspass/nspass-agent/discussions)
+如果您遇到任何问题或有功能建议，请通过以下方式联系我们：
+
+- [GitHub Issues](https://github.com/nspass/nspass-agent/issues)
+- [GitHub Discussions](https://github.com/nspass/nspass-agent/discussions)
+
+## 🙏 致谢
+
+感谢所有为这个项目做出贡献的开发者和用户！
 
 ---
 
-⭐ 如果这个项目对您有帮助，请给我们一个星标！
-
-## 快速安装
-
-### 自动安装脚本
-
-使用以下命令可以一键安装或升级 NSPass Agent：
-
-```bash
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
-```
-
-或者使用 wget：
-
-```bash
-wget -qO- https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
-```
-
-### 新版本安装脚本特性
-
-✨ **版本检测与自动更新**
-- 自动检测当前安装版本
-- 从 GitHub 获取最新版本信息
-- 智能版本比较，仅在有新版本时进行更新
-
-🔧 **系统兼容性**
-- 支持多种 Linux 发行版（Ubuntu、Debian、CentOS、RHEL、Fedora、Arch 等）
-- 支持多种系统架构（x86_64、arm64、armv7l、i386）
-- 自动检测并安装系统依赖
-
-⚡ **自动化服务管理**
-- 自动创建并配置 systemd 服务
-- 设置开机自启动
-- 实时检查服务状态
-- 优雅的服务重启机制
-
-📋 **完善的状态检查**
-- 安装前检查系统环境
-- 安装后验证服务状态
-- 详细的错误报告和日志输出
-
-## 卸载
-
-### 自动卸载脚本
-
-```bash
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/uninstall.sh | bash
-```
-
-### 卸载脚本特性
-
-🧹 **智能检测与清理**
-- 自动检测已安装的组件
-- 检查相关代理软件（Shadowsocks、Trojan、Snell）
-- 发现并清理 iptables 规则
-
-🔐 **安全确认机制**
-- 多级确认保护，防止误操作
-- 可选择性保留配置文件
-- 残留文件和进程检查
-
-📊 **详细的操作反馈**
-- 实时显示卸载进度
-- 清晰的操作结果反馈
-- 卸载后的建议和指导
-
-## 手动操作
-
-### 服务管理
-
-```bash
-# 查看服务状态
-systemctl status nspass-agent
-
-# 启动服务
-systemctl start nspass-agent
-
-# 停止服务
-systemctl stop nspass-agent
-
-# 重启服务
-systemctl restart nspass-agent
-
-# 查看服务日志
-journalctl -u nspass-agent -f
-```
-
-### 配置文件
-
-主配置文件位于 `/etc/nspass/config.yaml`，包含以下主要配置项：
-
-- **API 配置**：设置 NSPass 服务器地址和认证令牌
-- **代理配置**：管理支持的代理类型和路径
-- **iptables 配置**：网络规则管理
-- **日志配置**：日志级别和输出设置
-
-### 目录结构
-
-```
-/usr/local/bin/nspass-agent          # 主程序
-/etc/nspass/config.yaml              # 主配置文件
-/etc/nspass/proxy/                   # 代理配置目录
-/etc/nspass/iptables-backup/         # iptables 备份目录
-/etc/systemd/system/nspass-agent.service # systemd 服务文件
-```
-
-## 构建
-
-### 本地构建
-
-```bash
-# 克隆项目
-git clone https://github.com/nspass/nspass-agent.git
-cd nspass-agent
-
-# 构建
-make build
-
-# 运行
-./nspass-agent --config configs/config.yaml
-```
-
-### 交叉编译
-
-```bash
-# 构建所有平台版本
-make build-all
-
-# 构建特定平台
-make build-linux-amd64
-make build-linux-arm64
-```
-
-## 系统要求
-
-- **操作系统**：Linux（支持 systemd）
-- **架构**：x86_64、arm64、armv7l、i386
-- **权限**：需要 root 权限
-- **网络**：需要访问 GitHub 和 NSPass API
-
-## 常见问题
-
-### 安装失败
-
-1. **网络连接问题**：确保可以访问 GitHub 和 NSPass API
-2. **权限问题**：确保以 root 用户运行安装脚本
-3. **系统不兼容**：检查系统是否支持 systemd
-
-### 服务启动失败
-
-1. 检查配置文件格式：`nspass-agent --config /etc/nspass/config.yaml --check`
-2. 查看详细日志：`journalctl -u nspass-agent -n 50`
-3. 检查 API 令牌配置是否正确
-
-### 升级问题
-
-- 脚本会自动处理版本升级，无需手动干预
-- 如果升级失败，可以先卸载后重新安装
-- 配置文件会在升级过程中保留
-
-## 许可证
-
-本项目基于 [LICENSE](LICENSE) 许可证开源。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 支持
-
-- 文档：[docs/](docs/)
-- Issue：[GitHub Issues](https://github.com/nspass/nspass-agent/issues)
-- 官网：https://nspass.com
+**NSPass Agent** - 让代理服务管理变得简单高效
