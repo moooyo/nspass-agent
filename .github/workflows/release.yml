@@ -25,6 +25,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        submodules: recursive
     
     - name: Set up Go
       uses: actions/setup-go@v4
@@ -37,19 +38,6 @@ jobs:
         sudo apt-get install -y protobuf-compiler
         go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
         go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-    
-    - name: Debug filesystem
-      run: |
-        echo "Current working directory:"
-        pwd
-        echo "Files in current directory:"
-        ls -la
-        echo "Proto directory exists?"
-        ls -la proto || echo "Proto directory not found"
-        echo "Proto files count:"
-        find proto -name "*.proto" | wc -l || echo "Cannot count proto files"
-        echo "First 10 proto files:"
-        find proto -name "*.proto" | head -10 || echo "Cannot list proto files"
     
     - name: Generate Proto Files
       run: |
