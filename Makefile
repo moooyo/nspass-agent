@@ -106,9 +106,22 @@ proto-deps:
 # 生成proto代码
 proto-gen: proto-deps
 	@echo "生成proto代码..."
+	@echo "当前工作目录: $(shell pwd)"
+	@echo "PROTO_DIR: $(PROTO_DIR)"
+	@echo "GENERATED_DIR: $(GENERATED_DIR)"
+	@echo "检查proto目录是否存在:"
+	@ls -la $(PROTO_DIR) || { echo "❌ proto目录不存在!"; exit 1; }
 	@mkdir -p $(GENERATED_DIR)
 	@echo "Generated目录: $(GENERATED_DIR)"
 	@echo "找到的proto文件数量: $(shell find $(PROTO_DIR) -name '*.proto' | wc -l)"
+	@if [ "$(shell find $(PROTO_DIR) -name '*.proto' | wc -l)" = "0" ]; then \
+		echo "❌ 没有找到任何proto文件!"; \
+		echo "proto目录内容:"; \
+		find $(PROTO_DIR) -type f | head -20 || echo "proto目录为空"; \
+		exit 1; \
+	fi
+	@echo "proto文件列表:"
+	@find $(PROTO_DIR) -name "*.proto" | head -10
 	@export PATH="$$PATH:$(shell go env GOPATH)/bin"; \
 	for proto in $(PROTO_FILES); do \
 		echo "处理: $$proto"; \
