@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -393,30 +396,127 @@ func (s *Service) reportStatus() error {
 	return nil
 }
 
-// getNetworkAddresses 获取网络地址
-func (s *Service) getNetworkAddresses() (ipv4, ipv6 string, err error) {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return "", "", err
+// getPublicIP 通过API获取真实的外网IP地址
+func getPublicIP() (string, error) {
+	// 定义多个IP查询API，按优先级排序
+	ipAPIs := []string{
+		"https://ipapi.co/ip/",
+		"https://ip.sb",
+		"http://ip-api.com/line/?fields=query",
 	}
 
-	for _, iface := range interfaces {
-		// 跳过回环接口和未启用的接口
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-			continue
-		}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
 
-		addrs, err := iface.Addrs()
+	for _, apiURL := range ipAPIs {
+		ip, err := queryIPAPI(client, apiURL)
+		if err == nil && ip != "" {
+			// 验证IP地址格式
+			if net.ParseIP(ip) != nil {
+				return ip, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("无法从任何API获取有效的公网IP地址")
+}
+
+// queryIPAPI 查询指定的IP API
+func queryIPAPI(client *http.Client, apiURL string) (string, error) {
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("请求API失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API返回错误状态码: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 清理返回的IP地址（去除换行符和空格）
+	ip := strings.TrimSpace(string(body))
+
+	// 处理ip-api.com的JSON响应（可能返回JSON格式）
+	if strings.Contains(apiURL, "ip-api.com") && strings.Contains(ip, "{") {
+		// 如果是JSON响应，提取query字段的值
+		if strings.Contains(ip, `"query":"`) {
+			start := strings.Index(ip, `"query":"`) + 9
+			end := strings.Index(ip[start:], `"`)
+			if end > 0 {
+				ip = ip[start : start+end]
+			}
+		}
+	}
+
+	return ip, nil
+}
+
+// getNetworkAddresses 获取网络地址
+func (s *Service) getNetworkAddresses() (ipv4, ipv6 string, err error) {
+	log := logger.GetComponentLogger("agent-service")
+
+	// 首先尝试通过API获取真实的外网IPv4地址
+	publicIPv4, err := getPublicIP()
+	if err != nil {
+		log.WithError(err).Warn("通过API获取公网IP失败，将使用本地网络接口IP")
+	} else {
+		log.WithField("public_ip", publicIPv4).Info("成功获取公网IP地址")
+		ipv4 = publicIPv4
+	}
+
+	// 如果API获取失败，则回退到本地网络接口获取
+	if ipv4 == "" {
+		interfaces, err := net.Interfaces()
 		if err != nil {
-			continue
+			return "", "", fmt.Errorf("获取网络接口失败: %w", err)
 		}
 
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipnet.IP.To4() != nil && ipv4 == "" {
-					ipv4 = ipnet.IP.String()
-				} else if ipnet.IP.To16() != nil && ipv6 == "" {
-					ipv6 = ipnet.IP.String()
+		for _, iface := range interfaces {
+			// 跳过回环接口和未启用的接口
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipnet.IP.To4() != nil && ipv4 == "" {
+						ipv4 = ipnet.IP.String()
+					}
+				}
+			}
+		}
+	}
+
+	// 获取IPv6地址（仍然从本地接口获取，因为大多数外网IP查询服务不提供IPv6）
+	interfaces, err := net.Interfaces()
+	if err == nil {
+		for _, iface := range interfaces {
+			// 跳过回环接口和未启用的接口
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipnet.IP.To16() != nil && ipnet.IP.To4() == nil && ipv6 == "" {
+						ipv6 = ipnet.IP.String()
+					}
 				}
 			}
 		}
