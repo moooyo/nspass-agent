@@ -59,6 +59,7 @@ deep-clean: clean proto-clean
 	@rm -rf $(GENERATED_DIR)
 	@go clean -cache
 	@go clean -modcache
+	@echo "深度清理完成"
 
 # 运行测试
 test:
@@ -147,6 +148,7 @@ gen-proto: proto-gen
 proto-clean:
 	@echo "清理proto生成的代码..."
 	@rm -rf $(GENERATED_DIR)
+	@echo "proto代码清理完成"
 
 # 多平台构建
 build-all: proto-gen

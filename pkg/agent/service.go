@@ -551,8 +551,8 @@ func (s *Service) collectActivityInfo() (*api.AgentActivity, error) {
 
 	activity := &api.AgentActivity{
 		ActiveConnections:  int32(len(proxyStatuses)), // 简化的连接数统计
-		TotalBytesSent:     0,                         // TODO: 实现流量统计
-		TotalBytesReceived: 0,                         // TODO: 实现流量统计
+		TotalBytesSent:     0,                         // 流量统计功能待实现
+		TotalBytesReceived: 0,                         // 流量统计功能待实现
 		ProxyServices:      proxyStatuses,
 		LastActivity:       time.Now(),
 		CPUUsage:           float32(cpuPercent[0]),
@@ -573,8 +573,8 @@ func (s *Service) collectProxyStatuses() []api.ProxyServiceStatus {
 			serviceStatus := api.ProxyServiceStatus{
 				ServiceName:     proxyID,
 				ServiceStatus:   fmt.Sprintf("%v", status),
-				Port:            0, // TODO: 从配置中获取端口
-				ConnectionCount: 0, // TODO: 实现连接数统计
+				Port:            8080, // 使用默认端口，实际应从配置获取
+				ConnectionCount: 0,    // 连接数统计功能待实现
 				LastCheck:       time.Now(),
 			}
 

@@ -1,50 +1,41 @@
-# NSPass Agent 配置示例 - 包含代理进程监控配置
+# NSPass Agent 监控配置示例
+# 包含详细的代理进程监控配置，适用于不同环境
+
+# 基础配置
+server_id: "your-server-id-here"
 
 # API通信配置
 api:
-  base_url: "https://api.nspass.example.com"
+  base_url: "https://api.nspass.com"
   token: "your-api-token-here"
   timeout: 30
   retry_count: 3
   retry_delay: 5
+  tls: true
+  tls_skip_verify: false
 
 # 代理软件配置
 proxy:
   bin_path: "/usr/local/bin"
   config_path: "/etc/nspass/proxy"
-  enabled_types:
-    - "shadowsocks"
-    - "trojan"
-    - "snell"
+  enabled_types: ["shadowsocks", "trojan", "snell"]
   auto_start: true
   restart_on_fail: true
 
   # 进程监控配置
   monitor:
-    # 是否启用代理进程监控
-    enable: true
-    
-    # 健康检查间隔（秒）
-    # 每隔30秒检查一次所有代理进程状态
-    check_interval: 30
-    
-    # 重启冷却时间（秒）
-    # 代理重启后需要等待60秒才能再次重启
-    restart_cooldown: 60
-    
-    # 最大重启次数（每小时）
-    # 每小时最多自动重启10次，超过则停止自动重启
-    max_restarts: 10
-    
-    # 健康检查超时（秒）
-    # 如果检查代理状态超过5秒无响应，则认为异常
-    health_timeout: 5
+    enable: true                # 是否启用代理进程监控
+    check_interval: 30         # 检查间隔（秒）
+    restart_cooldown: 60       # 重启冷却时间（秒）
+    max_restarts: 10           # 每小时最大重启次数
+    health_timeout: 5          # 健康检查超时（秒）
 
 # IPTables防火墙配置
 iptables:
   enable: true
-  chain_prefix: "NSPASS_"
-  backup_path: "/etc/nspass/iptables/backup"
+  backup_path: "/etc/nspass/iptables-backup"
+  persistent_method: "iptables-save"
+  chain_prefix: "NSPASS"
 
 # 日志配置
 logger:
@@ -60,43 +51,14 @@ logger:
 # 更新间隔配置
 update_interval: 300  # API同步间隔（秒）
 
----
-# 开发环境监控配置示例
-# 开发环境可以使用更频繁的检查和更宽松的重启策略
-proxy:
-  monitor:
-    enable: true
-    check_interval: 10      # 10秒检查一次
-    restart_cooldown: 30    # 30秒冷却
-    max_restarts: 20        # 每小时最多20次
-    health_timeout: 3       # 3秒超时
+# WebSocket配置
+websocket:
+  enabled: true
+  server_url: "ws://localhost:8080/ws"
+  agent_id: "agent-001"
+  heartbeat_interval: 30s
+  metrics_interval: 60s
+  reconnect_interval: 5s
+  max_reconnect_attempts: 0  # 0表示无限重试
 
----
-# 生产环境监控配置示例
-# 生产环境使用更保守的监控策略
-proxy:
-  monitor:
-    enable: true
-    check_interval: 60      # 60秒检查一次
-    restart_cooldown: 120   # 120秒冷却
-    max_restarts: 5         # 每小时最多5次
-    health_timeout: 10      # 10秒超时
-
----
-# 高可用环境监控配置示例
-# 高可用环境需要快速检测和恢复
-proxy:
-  monitor:
-    enable: true
-    check_interval: 15      # 15秒检查一次
-    restart_cooldown: 45    # 45秒冷却
-    max_restarts: 15        # 每小时最多15次
-    health_timeout: 5       # 5秒超时
-
----
-# 禁用监控示例
-# 在某些场景下可能需要禁用自动监控
-proxy:
-  monitor:
-    enable: false
-    # 其他配置在禁用时不生效 
+ 
