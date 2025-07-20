@@ -57,17 +57,7 @@ curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/ins
 | **自定义端点** | `curl -sSL install-url \| sudo bash -s -- -sid server001 -token abc123 -endpoint https://api.custom.com` | 指定自定义API地址 |
 
 ```bash
-# 1. 超简洁格式（推荐）- 使用短参数
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env production
-
-# 2. 位置参数格式（最短）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s server001 abc123def456 production
-
-# 3. 其他环境安装
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env staging
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -env testing
-
-# 4. 自定义 API 端点
+# 自定义 API 端点
 curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
 
 # 5. 查看帮助
