@@ -31,7 +31,7 @@ INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen proto-clean build-all release release-github run
+.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen gen-proto proto-clean build-all release release-github run
 
 # 默认目标
 all: proto-clean proto-gen build
@@ -135,6 +135,9 @@ proto-gen: proto-deps
 	@rm -f $(GENERATED_DIR)/go.mod
 	@echo "proto代码生成完成！"
 
+# 生成proto代码（别名）
+gen-proto: proto-gen
+
 # 清理proto生成的代码
 proto-clean:
 	@echo "清理proto生成的代码..."
@@ -221,6 +224,7 @@ help:
 	@echo "Proto相关："
 	@echo "  proto-deps   安装proto依赖"
 	@echo "  proto-gen    生成proto代码"
+	@echo "  gen-proto    生成proto代码（别名）"
 	@echo ""
 	@echo "系统相关："
 	@echo "  install      安装到系统"
