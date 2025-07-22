@@ -1,9 +1,9 @@
 # NSPass Agent
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/nspass/nspass-agent)](https://github.com/nspass/nspass-agent)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/nspass/nspass-agent/build.yml)](https://github.com/nspass/nspass-agent/actions)
-[![Release](https://img.shields.io/github/v/release/nspass/nspass-agent)](https://github.com/nspass/nspass-agent/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/moooyo/nspass-agent)](https://github.com/moooyo/nspass-agent)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/moooyo/nspass-agent/build.yml)](https://github.com/moooyo/nspass-agent/actions)
+[![Release](https://img.shields.io/github/v/release/moooyo/nspass-agent)](https://github.com/moooyo/nspass-agent/releases)
 
 NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控各种代理服务（如 Shadowsocks、Trojan、Snell 等）。它提供了统一的接口来管理多种代理协议，并支持实时监控、流量统计、规则管理等功能。
 
@@ -27,10 +27,10 @@ NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控�
 
 ```bash
 # 基础安装（安装后需要手动配置）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | sudo bash
 
 # 带参数安装（推荐，超简洁格式）
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid your-server-id -token your-api-token -env production
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid your-server-id -token your-api-token -env production
 ```
 
 **参数说明：**
@@ -58,10 +58,10 @@ curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/ins
 
 ```bash
 # 自定义 API 端点
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
 
 # 5. 查看帮助
-curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- -h
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- -h
 ```
 
 ### 手动下载安装
@@ -70,7 +70,7 @@ curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/ins
 
 ```bash
 # 1. 下载最新版本（以 Linux AMD64 为例）
-curl -L https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz -o nspass-agent.tar.gz
+curl -L https://github.com/moooyo/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz -o nspass-agent.tar.gz
 
 # 2. 解压
 tar -xzf nspass-agent.tar.gz
@@ -86,16 +86,16 @@ sudo mkdir -p /etc/nspass
 sudo mkdir -p /var/log/nspass
 
 # 6. 下载示例配置文件
-sudo curl -L https://raw.githubusercontent.com/nspass/nspass-agent/main/configs/config.yaml -o /etc/nspass/config.yaml
+sudo curl -L https://raw.githubusercontent.com/moooyo/nspass-agent/main/configs/config.yaml -o /etc/nspass/config.yaml
 ```
 
 ### 支持的系统架构
 
 | 操作系统 | 架构 | 下载链接 |
 |---------|------|----------|
-| Linux | x86_64 (AMD64) | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz) |
-| Linux | ARM64 | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-arm64.tar.gz) |
-| Linux | ARM | [下载](https://github.com/nspass/nspass-agent/releases/latest/download/nspass-agent-linux-arm.tar.gz) |
+| Linux | x86_64 (AMD64) | [下载](https://github.com/moooyo/nspass-agent/releases/latest/download/nspass-agent-linux-amd64.tar.gz) |
+| Linux | ARM64 | [下载](https://github.com/moooyo/nspass-agent/releases/latest/download/nspass-agent-linux-arm64.tar.gz) |
+| Linux | ARM | [下载](https://github.com/moooyo/nspass-agent/releases/latest/download/nspass-agent-linux-arm.tar.gz) |
 
 ## ⚙️ 配置
 
@@ -198,7 +198,7 @@ nspass-agent run --config=/path/to/config.yaml
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/nspass/nspass-agent.git
+git clone https://github.com/moooyo/nspass-agent.git
 cd nspass-agent
 
 # 2. 安装依赖
@@ -291,8 +291,8 @@ NSPass Agent 提供完整的 REST API 接口，支持：
 
 如果您遇到任何问题或有功能建议，请通过以下方式联系我们：
 
-- [GitHub Issues](https://github.com/nspass/nspass-agent/issues)
-- [GitHub Discussions](https://github.com/nspass/nspass-agent/discussions)
+- [GitHub Issues](https://github.com/moooyo/nspass-agent/issues)
+- [GitHub Discussions](https://github.com/moooyo/nspass-agent/discussions)
 
 ## 🙏 致谢
 
