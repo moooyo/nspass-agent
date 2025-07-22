@@ -2,15 +2,15 @@
 
 # NSPass Agent 安装/升级脚本
 # 使用方法: 
-#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash
 #   或
-#   curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token --base-url=https://api.nspass.com
+#   curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token --base-url=https://api.nspass.com
 
 set -e
 
 # 版本信息
 SCRIPT_VERSION="2.1.0"
-GITHUB_REPO="nspass/nspass-agent"
+GITHUB_REPO="moooyo/nspass-agent"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/nspass"
 LOG_DIR="/var/log/nspass"
@@ -85,8 +85,8 @@ show_help() {
     echo "  $0 -sid server001 -token your-token -endpoint https://api.nspass.com  # 自定义端点"
     echo ""
     echo "远程安装:"
-    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s server001 your-token production"
-    echo "  curl -sSL https://raw.githubusercontent.com/nspass/nspass-agent/main/scripts/install.sh | bash -s -- -sid server001 -token your-token -env production"
+    echo "  curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s server001 your-token production"
+    echo "  curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- -sid server001 -token your-token -env production"
     echo ""
 }
 
