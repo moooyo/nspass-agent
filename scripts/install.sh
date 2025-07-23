@@ -10,6 +10,9 @@
 set -e
 set -o pipefail
 
+# 处理管道中的错误
+trap 'echo "[ERROR] 脚本在第 $LINENO 行出错，退出码: $?" >&2; exit 1' ERR
+
 # 调试模式开关 (设置为 1 启用详细输出)
 DEBUG_MODE=${DEBUG_MODE:-1}
 
@@ -37,6 +40,19 @@ exec_with_log() {
         local exit_code=$?
         print_error "命令执行失败 (退出码: $exit_code): $cmd"
         return $exit_code
+    fi
+}
+
+# 管道安装检测
+detect_pipe_install() {
+    if [ -t 0 ]; then
+        debug_log "检测到交互式安装（非管道）"
+        PIPE_INSTALL=false
+    else
+        debug_log "检测到管道安装"
+        PIPE_INSTALL=true
+        # 管道安装时，确保错误能被看到
+        exec 2>&1
     fi
 }
 
@@ -482,8 +498,8 @@ download_and_install() {
     print_step "下载nspass-agent $LATEST_VERSION..."
     debug_log "开始下载和安装流程"
     
-    # 构建下载URL
-    local filename="nspass-agent-linux-$ARCH"
+    # 构建下载URL - 优先尝试tar.gz格式
+    local filename="nspass-agent-linux-$ARCH.tar.gz"
     local download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/$filename"
     local temp_dir=$(mktemp -d)
     local temp_file="$temp_dir/$filename"
@@ -511,18 +527,18 @@ download_and_install() {
     local download_success=false
     local download_method=""
     
-    # 尝试使用 curl
+    # 尝试使用 curl 下载 tar.gz
     if command -v curl >/dev/null 2>&1; then
-        print_info "使用 curl 下载..."
+        print_info "使用 curl 下载 tar.gz..."
         debug_log "curl 版本: $(curl --version | head -1)"
         
         if curl -L --connect-timeout 30 --max-time 300 -o "$temp_file" "$download_url" 2>&1; then
             download_success=true
-            download_method="curl"
-            debug_log "curl 下载成功"
+            download_method="curl (tar.gz)"
+            debug_log "curl tar.gz 下载成功"
         else
             local curl_exit_code=$?
-            print_warn "curl 下载失败，退出码: $curl_exit_code"
+            print_warn "curl tar.gz 下载失败，退出码: $curl_exit_code"
         fi
     else
         debug_log "curl 不可用"
@@ -530,106 +546,53 @@ download_and_install() {
     
     # 如果 curl 失败，尝试 wget
     if [ "$download_success" = false ] && command -v wget >/dev/null 2>&1; then
-        print_info "使用 wget 下载..."
+        print_info "使用 wget 下载 tar.gz..."
         debug_log "wget 版本: $(wget --version | head -1)"
         
         if wget --timeout=300 --tries=3 -O "$temp_file" "$download_url" 2>&1; then
             download_success=true
-            download_method="wget"
-            debug_log "wget 下载成功"
+            download_method="wget (tar.gz)"
+            debug_log "wget tar.gz 下载成功"
         else
             local wget_exit_code=$?
-            print_warn "wget 下载失败，退出码: $wget_exit_code"
+            print_warn "wget tar.gz 下载失败，退出码: $wget_exit_code"
         fi
     else
         debug_log "wget 不可用或已成功下载"
     fi
     
-    # 如果下载失败，尝试tar.gz格式
+    # 如果 tar.gz 下载失败，尝试直接下载二进制文件（作为备选）
     if [ "$download_success" = false ]; then
-        print_warn "直接下载失败，尝试tar.gz格式..."
-        filename="nspass-agent-linux-$ARCH.tar.gz"
+        print_warn "tar.gz 下载失败，尝试直接下载二进制文件..."
+        filename="nspass-agent-linux-$ARCH"
         download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/$filename"
         temp_file="$temp_dir/$filename"
         
-        print_info "新的下载URL: $download_url"
+        print_info "备选下载URL: $download_url"
         
         # 重新尝试 curl
         if command -v curl >/dev/null 2>&1; then
-            print_info "使用 curl 下载 tar.gz..."
+            print_info "使用 curl 下载二进制文件..."
             if curl -L --connect-timeout 30 --max-time 300 -o "$temp_file" "$download_url" 2>&1; then
                 download_success=true
-                download_method="curl (tar.gz)"
-                debug_log "curl tar.gz 下载成功"
+                download_method="curl (binary)"
+                debug_log "curl 二进制文件下载成功"
             else
                 local curl_exit_code=$?
-                print_warn "curl tar.gz 下载失败，退出码: $curl_exit_code"
+                print_warn "curl 二进制文件下载失败，退出码: $curl_exit_code"
             fi
         fi
         
         # 重新尝试 wget
         if [ "$download_success" = false ] && command -v wget >/dev/null 2>&1; then
-            print_info "使用 wget 下载 tar.gz..."
+            print_info "使用 wget 下载二进制文件..."
             if wget --timeout=300 --tries=3 -O "$temp_file" "$download_url" 2>&1; then
                 download_success=true
-                download_method="wget (tar.gz)"
-                debug_log "wget tar.gz 下载成功"
+                download_method="wget (binary)"
+                debug_log "wget 二进制文件下载成功"
             else
                 local wget_exit_code=$?
-                print_warn "wget tar.gz 下载失败，退出码: $wget_exit_code"
-            fi
-        fi
-        
-        # 如果是 tar.gz 格式，需要解压
-        if [ "$download_success" = true ]; then
-            print_info "正在解压文件..."
-            debug_log "解压文件: $temp_file"
-            
-            cd "$temp_dir"
-            if tar -xzf "$filename" 2>&1; then
-                debug_log "解压成功"
-                
-                # 查找二进制文件
-                local binary_file=""
-                local possible_names=("nspass-agent" "nspass-agent-linux-$ARCH" "nspass-agent-$ARCH" "nspass-agent-linux" "agent")
-                
-                debug_log "查找二进制文件..."
-                for file in "${possible_names[@]}"; do
-                    debug_log "检查文件: $file"
-                    if [ -f "$file" ]; then
-                        binary_file="$file"
-                        debug_log "找到二进制文件: $binary_file"
-                        break
-                    fi
-                done
-                
-                # 如果没找到预期的文件名，列出所有文件
-                if [ -z "$binary_file" ]; then
-                    print_warn "未找到预期的二进制文件，临时目录内容："
-                    ls -la "$temp_dir"
-                    
-                    # 尝试找到可执行文件
-                    binary_file=$(find "$temp_dir" -type f -executable | head -1)
-                    if [ -n "$binary_file" ]; then
-                        binary_file=$(basename "$binary_file")
-                        print_info "找到可执行文件: $binary_file"
-                    fi
-                fi
-                
-                if [ -n "$binary_file" ]; then
-                    temp_file="$temp_dir/$binary_file"
-                    debug_log "最终二进制文件路径: $temp_file"
-                else
-                    print_error "未找到二进制文件"
-                    print_error "临时目录内容:"
-                    ls -la "$temp_dir"
-                    rm -rf "$temp_dir"
-                    exit 1
-                fi
-            else
-                print_error "解压失败"
-                rm -rf "$temp_dir"
-                exit 1
+                print_warn "wget 二进制文件下载失败，退出码: $wget_exit_code"
             fi
         fi
     fi
@@ -644,7 +607,8 @@ download_and_install() {
         print_error "  4. 系统架构 ($ARCH) 不支持"
         print_error ""
         print_error "请手动检查以下URL是否可访问："
-        print_error "  $download_url"
+        print_error "  https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/nspass-agent-linux-$ARCH.tar.gz"
+        print_error "  https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/nspass-agent-linux-$ARCH"
         rm -rf "$temp_dir"
         exit 1
     fi
@@ -668,11 +632,73 @@ download_and_install() {
         exit 1
     fi
     
-    if [ "$file_size" -lt 1000000 ]; then  # 小于 1MB 可能有问题
-        print_warn "下载的文件大小异常小 ($file_size 字节)，请检查"
-        # 显示文件前几行内容用于调试
-        debug_log "文件内容预览:"
-        head -c 500 "$temp_file" | xxd
+    if [ "$file_size" -lt 1000 ]; then  # 小于 1KB 可能是错误页面
+        print_error "下载的文件大小异常小 ($file_size 字节)"
+        print_error "文件内容:"
+        cat "$temp_file"
+        print_error ""
+        print_error "这通常表示下载的是404错误页面而不是实际文件"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    # 检查文件类型并处理
+    if echo "$filename" | grep -q "\.tar\.gz$"; then
+        # 如果是 tar.gz 格式，需要解压
+        print_info "正在解压文件..."
+        debug_log "解压文件: $temp_file"
+        
+        cd "$temp_dir"
+        if tar -xzf "$filename" 2>&1; then
+            debug_log "解压成功"
+            
+            # 查找二进制文件
+            local binary_file=""
+            local possible_names=("nspass-agent" "nspass-agent-linux-$ARCH" "nspass-agent-$ARCH" "nspass-agent-linux" "agent")
+            
+            debug_log "查找二进制文件..."
+            for file in "${possible_names[@]}"; do
+                debug_log "检查文件: $file"
+                if [ -f "$file" ]; then
+                    binary_file="$file"
+                    debug_log "找到二进制文件: $binary_file"
+                    break
+                fi
+            done
+            
+            # 如果没找到预期的文件名，列出所有文件
+            if [ -z "$binary_file" ]; then
+                print_info "未找到预期的二进制文件，临时目录内容："
+                ls -la "$temp_dir"
+                
+                # 尝试找到可执行文件或最大的文件
+                binary_file=$(find "$temp_dir" -type f -executable | head -1)
+                if [ -z "$binary_file" ]; then
+                    # 找最大的文件，可能是二进制文件
+                    binary_file=$(find "$temp_dir" -type f -exec ls -la {} + | grep -v "\.tar\.gz$" | sort -k5 -nr | head -1 | awk '{print $NF}')
+                fi
+                
+                if [ -n "$binary_file" ]; then
+                    binary_file=$(basename "$binary_file")
+                    print_info "找到文件: $binary_file"
+                fi
+            fi
+            
+            if [ -n "$binary_file" ]; then
+                temp_file="$temp_dir/$binary_file"
+                debug_log "最终二进制文件路径: $temp_file"
+            else
+                print_error "未找到二进制文件"
+                print_error "临时目录内容:"
+                ls -la "$temp_dir"
+                rm -rf "$temp_dir"
+                exit 1
+            fi
+        else
+            print_error "解压失败"
+            rm -rf "$temp_dir"
+            exit 1
+        fi
     fi
     
     # 检查文件类型
@@ -1046,6 +1072,9 @@ show_post_install_info() {
 
 # 主安装流程
 main() {
+    # 检测安装方式
+    detect_pipe_install
+    
     echo "======================================"
     echo "NSPass Agent 安装/升级脚本 v$SCRIPT_VERSION"
     echo "======================================"
@@ -1058,6 +1087,7 @@ main() {
     print_info "  执行用户: $(whoami)"
     print_info "  当前目录: $(pwd)"
     print_info "  Shell: $0"
+    print_info "  安装方式: $([ "$PIPE_INSTALL" = "true" ] && echo "管道安装" || echo "本地安装")"
     print_info "  调试模式: $([ "$DEBUG_MODE" = "1" ] && echo "已启用" || echo "已禁用")"
     echo ""
     
