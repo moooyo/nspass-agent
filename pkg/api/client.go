@@ -44,8 +44,8 @@ func NewClient(cfg config.APIConfig, serverID string) *Client {
 
 // setAuthHeaders 设置鉴权Headers
 func (c *Client) setAuthHeaders(req *http.Request) {
-	req.Header.Set("X-Server-ID", c.serverID)
-	req.Header.Set("X-Token", c.config.Token)
+	req.Header.Set("Server-ID", c.serverID)
+	req.Header.Set("Server-Token", c.config.Token)
 	req.Header.Set("Content-Type", "application/json")
 }
 
@@ -332,10 +332,10 @@ func (c *Client) GetServerIptablesConfigsProto(serverID string) ([]*model.Iptabl
 		if i < c.config.RetryCount-1 {
 			retryDelay := time.Duration(c.config.RetryDelay) * time.Second
 			log.WithFields(logrus.Fields{
-				"retry":      i + 1,
-				"max_retry":  c.config.RetryCount,
-				"error":      lastErr,
-				"delay":      retryDelay,
+				"retry":     i + 1,
+				"max_retry": c.config.RetryCount,
+				"error":     lastErr,
+				"delay":     retryDelay,
 			}).Debug("iptables配置请求失败，准备重试")
 			time.Sleep(retryDelay)
 		}
