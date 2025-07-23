@@ -6,7 +6,39 @@
 #   或
 #   curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token --base-url=https://api.nspass.com
 
+# 启用调试模式和错误退出
 set -e
+set -o pipefail
+
+# 调试模式开关 (设置为 1 启用详细输出)
+DEBUG_MODE=${DEBUG_MODE:-1}
+
+# 调试函数
+debug_log() {
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo -e "${BLUE}[DEBUG]${NC} $1" >&2
+    fi
+}
+
+# 执行命令并记录
+exec_with_log() {
+    local cmd="$1"
+    local desc="$2"
+    
+    debug_log "执行命令: $cmd"
+    if [ -n "$desc" ]; then
+        debug_log "操作描述: $desc"
+    fi
+    
+    if eval "$cmd"; then
+        debug_log "命令执行成功"
+        return 0
+    else
+        local exit_code=$?
+        print_error "命令执行失败 (退出码: $exit_code): $cmd"
+        return $exit_code
+    fi
+}
 
 # 版本信息
 SCRIPT_VERSION="2.1.0"
@@ -257,33 +289,91 @@ get_current_version() {
 # 获取GitHub最新版本
 get_latest_version() {
     print_step "获取最新版本信息..."
+    debug_log "开始从 GitHub API 获取版本信息"
     
     # 尝试多种方式获取最新版本
     LATEST_VERSION=""
+    local api_url="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    debug_log "API URL: $api_url"
     
-    # 方法1: 使用GitHub API
+    # 方法1: 使用GitHub API (curl)
     if command -v curl >/dev/null 2>&1; then
-        local api_response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null)
-        if [ $? -eq 0 ] && echo "$api_response" | grep -q "tag_name"; then
-            LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        debug_log "尝试使用 curl 获取版本信息..."
+        
+        # 测试网络连接
+        if ! curl -s --connect-timeout 10 --max-time 30 -I "https://api.github.com" >/dev/null 2>&1; then
+            print_warn "无法连接到 GitHub API，网络可能有问题"
+        else
+            debug_log "GitHub API 连接正常"
         fi
+        
+        local api_response
+        api_response=$(curl -s --connect-timeout 10 --max-time 30 "$api_url" 2>&1)
+        local curl_exit_code=$?
+        
+        debug_log "curl 退出码: $curl_exit_code"
+        debug_log "API 响应长度: ${#api_response} 字符"
+        
+        if [ $curl_exit_code -eq 0 ] && [ -n "$api_response" ]; then
+            # 检查响应是否包含错误
+            if echo "$api_response" | grep -q '"message".*"rate limit\|"message".*"API rate limit'; then
+                print_warn "GitHub API 限流，响应: $(echo "$api_response" | head -c 200)..."
+            elif echo "$api_response" | grep -q '"message"'; then
+                local error_msg=$(echo "$api_response" | grep -o '"message":"[^"]*"' | head -1)
+                print_warn "GitHub API 错误: $error_msg"
+            elif echo "$api_response" | grep -q "tag_name"; then
+                LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
+                debug_log "从 API 响应解析版本: $LATEST_VERSION"
+            else
+                debug_log "API 响应格式异常: $(echo "$api_response" | head -c 200)..."
+            fi
+        else
+            print_warn "curl 请求失败，退出码: $curl_exit_code"
+            if [ -n "$api_response" ]; then
+                debug_log "错误响应: $(echo "$api_response" | head -c 200)..."
+            fi
+        fi
+    else
+        debug_log "curl 命令不可用"
     fi
     
     # 方法2: 如果curl失败，尝试wget
     if [ -z "$LATEST_VERSION" ] && command -v wget >/dev/null 2>&1; then
-        local api_response=$(wget -qO- "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null)
-        if [ $? -eq 0 ] && echo "$api_response" | grep -q "tag_name"; then
-            LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+        debug_log "尝试使用 wget 获取版本信息..."
+        
+        local api_response
+        api_response=$(wget --timeout=30 --tries=2 -qO- "$api_url" 2>&1)
+        local wget_exit_code=$?
+        
+        debug_log "wget 退出码: $wget_exit_code"
+        debug_log "API 响应长度: ${#api_response} 字符"
+        
+        if [ $wget_exit_code -eq 0 ] && echo "$api_response" | grep -q "tag_name"; then
+            LATEST_VERSION=$(echo "$api_response" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null || echo "")
+            debug_log "从 wget 响应解析版本: $LATEST_VERSION"
+        else
+            print_warn "wget 请求失败，退出码: $wget_exit_code"
+            if [ -n "$api_response" ]; then
+                debug_log "错误响应: $(echo "$api_response" | head -c 200)..."
+            fi
         fi
+    else
+        debug_log "wget 命令不可用或已获取到版本"
     fi
     
     # 方法3: 如果API失败，使用默认版本（开发阶段）
     if [ -z "$LATEST_VERSION" ]; then
-        print_warn "无法从GitHub API获取版本信息，使用默认版本"
+        print_warn "无法从GitHub API获取版本信息，可能原因："
+        print_warn "  1. 网络连接问题"
+        print_warn "  2. GitHub API 限流"
+        print_warn "  3. 仓库不存在或私有"
+        print_warn "  4. curl/wget 配置问题"
+        print_warn "使用默认版本 v1.0.0"
         LATEST_VERSION="v1.0.0"
     fi
     
     print_info "目标版本: $LATEST_VERSION"
+    debug_log "版本获取完成"
 }
 
 # 版本比较函数
@@ -390,6 +480,7 @@ stop_service_if_running() {
 # 下载并安装二进制文件
 download_and_install() {
     print_step "下载nspass-agent $LATEST_VERSION..."
+    debug_log "开始下载和安装流程"
     
     # 构建下载URL
     local filename="nspass-agent-linux-$ARCH"
@@ -398,17 +489,60 @@ download_and_install() {
     local temp_file="$temp_dir/$filename"
     
     print_info "下载URL: $download_url"
+    print_info "临时目录: $temp_dir"
+    debug_log "目标文件: $temp_file"
+    
+    # 检查临时目录是否创建成功
+    if [ ! -d "$temp_dir" ]; then
+        print_error "无法创建临时目录"
+        exit 1
+    fi
+    debug_log "临时目录创建成功"
+    
+    # 测试网络连接
+    print_info "测试网络连接..."
+    if ! ping -c 1 github.com >/dev/null 2>&1; then
+        print_warn "无法 ping 通 github.com，但继续尝试下载"
+    else
+        debug_log "网络连接正常"
+    fi
     
     # 下载文件
     local download_success=false
+    local download_method=""
+    
+    # 尝试使用 curl
     if command -v curl >/dev/null 2>&1; then
-        if curl -L -o "$temp_file" "$download_url" 2>/dev/null; then
+        print_info "使用 curl 下载..."
+        debug_log "curl 版本: $(curl --version | head -1)"
+        
+        if curl -L --connect-timeout 30 --max-time 300 -o "$temp_file" "$download_url" 2>&1; then
             download_success=true
+            download_method="curl"
+            debug_log "curl 下载成功"
+        else
+            local curl_exit_code=$?
+            print_warn "curl 下载失败，退出码: $curl_exit_code"
         fi
-    elif command -v wget >/dev/null 2>&1; then
-        if wget -O "$temp_file" "$download_url" 2>/dev/null; then
+    else
+        debug_log "curl 不可用"
+    fi
+    
+    # 如果 curl 失败，尝试 wget
+    if [ "$download_success" = false ] && command -v wget >/dev/null 2>&1; then
+        print_info "使用 wget 下载..."
+        debug_log "wget 版本: $(wget --version | head -1)"
+        
+        if wget --timeout=300 --tries=3 -O "$temp_file" "$download_url" 2>&1; then
             download_success=true
+            download_method="wget"
+            debug_log "wget 下载成功"
+        else
+            local wget_exit_code=$?
+            print_warn "wget 下载失败，退出码: $wget_exit_code"
         fi
+    else
+        debug_log "wget 不可用或已成功下载"
     fi
     
     # 如果下载失败，尝试tar.gz格式
@@ -418,33 +552,77 @@ download_and_install() {
         download_url="https://github.com/$GITHUB_REPO/releases/download/$LATEST_VERSION/$filename"
         temp_file="$temp_dir/$filename"
         
+        print_info "新的下载URL: $download_url"
+        
+        # 重新尝试 curl
         if command -v curl >/dev/null 2>&1; then
-            if curl -L -o "$temp_file" "$download_url" 2>/dev/null; then
+            print_info "使用 curl 下载 tar.gz..."
+            if curl -L --connect-timeout 30 --max-time 300 -o "$temp_file" "$download_url" 2>&1; then
                 download_success=true
-            fi
-        elif command -v wget >/dev/null 2>&1; then
-            if wget -O "$temp_file" "$download_url" 2>/dev/null; then
-                download_success=true
+                download_method="curl (tar.gz)"
+                debug_log "curl tar.gz 下载成功"
+            else
+                local curl_exit_code=$?
+                print_warn "curl tar.gz 下载失败，退出码: $curl_exit_code"
             fi
         fi
         
+        # 重新尝试 wget
+        if [ "$download_success" = false ] && command -v wget >/dev/null 2>&1; then
+            print_info "使用 wget 下载 tar.gz..."
+            if wget --timeout=300 --tries=3 -O "$temp_file" "$download_url" 2>&1; then
+                download_success=true
+                download_method="wget (tar.gz)"
+                debug_log "wget tar.gz 下载成功"
+            else
+                local wget_exit_code=$?
+                print_warn "wget tar.gz 下载失败，退出码: $wget_exit_code"
+            fi
+        fi
+        
+        # 如果是 tar.gz 格式，需要解压
         if [ "$download_success" = true ]; then
             print_info "正在解压文件..."
+            debug_log "解压文件: $temp_file"
+            
             cd "$temp_dir"
-            if tar -xzf "$filename" 2>/dev/null; then
+            if tar -xzf "$filename" 2>&1; then
+                debug_log "解压成功"
+                
                 # 查找二进制文件
                 local binary_file=""
-                for file in nspass-agent nspass-agent-linux-$ARCH nspass-agent-$ARCH; do
+                local possible_names=("nspass-agent" "nspass-agent-linux-$ARCH" "nspass-agent-$ARCH" "nspass-agent-linux" "agent")
+                
+                debug_log "查找二进制文件..."
+                for file in "${possible_names[@]}"; do
+                    debug_log "检查文件: $file"
                     if [ -f "$file" ]; then
                         binary_file="$file"
+                        debug_log "找到二进制文件: $binary_file"
                         break
                     fi
                 done
                 
+                # 如果没找到预期的文件名，列出所有文件
+                if [ -z "$binary_file" ]; then
+                    print_warn "未找到预期的二进制文件，临时目录内容："
+                    ls -la "$temp_dir"
+                    
+                    # 尝试找到可执行文件
+                    binary_file=$(find "$temp_dir" -type f -executable | head -1)
+                    if [ -n "$binary_file" ]; then
+                        binary_file=$(basename "$binary_file")
+                        print_info "找到可执行文件: $binary_file"
+                    fi
+                fi
+                
                 if [ -n "$binary_file" ]; then
                     temp_file="$temp_dir/$binary_file"
+                    debug_log "最终二进制文件路径: $temp_file"
                 else
                     print_error "未找到二进制文件"
+                    print_error "临时目录内容:"
+                    ls -la "$temp_dir"
                     rm -rf "$temp_dir"
                     exit 1
                 fi
@@ -456,34 +634,100 @@ download_and_install() {
         fi
     fi
     
+    # 最终检查下载是否成功
     if [ "$download_success" = false ]; then
-        print_error "下载失败，请检查网络连接或版本是否存在"
-        print_error "尝试的URL: $download_url"
+        print_error "下载失败，尝试的方法都无效"
+        print_error "可能的原因："
+        print_error "  1. 网络连接问题"
+        print_error "  2. GitHub releases 中不存在该版本文件"
+        print_error "  3. 防火墙或代理阻止了下载"
+        print_error "  4. 系统架构 ($ARCH) 不支持"
+        print_error ""
+        print_error "请手动检查以下URL是否可访问："
+        print_error "  $download_url"
         rm -rf "$temp_dir"
         exit 1
     fi
     
+    print_info "下载成功，使用方法: $download_method"
+    
     # 检查下载的文件
-    if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
-        print_error "下载的文件不存在或为空"
+    debug_log "检查下载的文件..."
+    if [ ! -f "$temp_file" ]; then
+        print_error "下载的文件不存在: $temp_file"
         rm -rf "$temp_dir"
         exit 1
+    fi
+    
+    local file_size=$(stat -c%s "$temp_file" 2>/dev/null || wc -c < "$temp_file")
+    debug_log "文件大小: $file_size 字节"
+    
+    if [ "$file_size" -eq 0 ]; then
+        print_error "下载的文件为空"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    if [ "$file_size" -lt 1000000 ]; then  # 小于 1MB 可能有问题
+        print_warn "下载的文件大小异常小 ($file_size 字节)，请检查"
+        # 显示文件前几行内容用于调试
+        debug_log "文件内容预览:"
+        head -c 500 "$temp_file" | xxd
+    fi
+    
+    # 检查文件类型
+    if command -v file >/dev/null 2>&1; then
+        local file_type=$(file "$temp_file")
+        debug_log "文件类型: $file_type"
+        
+        if ! echo "$file_type" | grep -q "executable\|ELF"; then
+            print_warn "文件似乎不是可执行文件: $file_type"
+        fi
     fi
     
     # 安装二进制文件
     print_info "安装二进制文件..."
-    cp "$temp_file" "$INSTALL_DIR/nspass-agent"
-    chmod +x "$INSTALL_DIR/nspass-agent"
+    debug_log "复制文件: $temp_file -> $INSTALL_DIR/nspass-agent"
+    
+    if ! cp "$temp_file" "$INSTALL_DIR/nspass-agent"; then
+        print_error "复制文件失败"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    if ! chmod +x "$INSTALL_DIR/nspass-agent"; then
+        print_error "设置执行权限失败"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+    
+    debug_log "文件权限设置完成"
     
     # 验证安装
-    if ! "$INSTALL_DIR/nspass-agent" --version >/dev/null 2>&1; then
+    print_info "验证安装..."
+    if "$INSTALL_DIR/nspass-agent" --version >/dev/null 2>&1; then
+        local installed_version=$("$INSTALL_DIR/nspass-agent" --version 2>/dev/null | head -1)
+        print_info "验证成功，安装版本: $installed_version"
+    else
         print_error "二进制文件验证失败"
+        print_error "可能的原因："
+        print_error "  1. 下载的文件损坏"
+        print_error "  2. 系统架构不匹配"
+        print_error "  3. 缺少运行时依赖"
+        
+        # 尝试获取更多信息
+        if command -v ldd >/dev/null 2>&1; then
+            print_error "依赖库检查:"
+            ldd "$INSTALL_DIR/nspass-agent" 2>&1 || true
+        fi
+        
         rm -rf "$temp_dir"
         exit 1
     fi
     
     # 清理临时文件
     rm -rf "$temp_dir"
+    debug_log "临时文件清理完成"
     
     print_info "二进制文件安装完成"
 }
@@ -807,43 +1051,172 @@ main() {
     echo "======================================"
     echo ""
     
+    # 显示执行环境信息
+    print_info "执行环境信息:"
+    print_info "  脚本版本: $SCRIPT_VERSION"
+    print_info "  执行时间: $(date)"
+    print_info "  执行用户: $(whoami)"
+    print_info "  当前目录: $(pwd)"
+    print_info "  Shell: $0"
+    print_info "  调试模式: $([ "$DEBUG_MODE" = "1" ] && echo "已启用" || echo "已禁用")"
+    echo ""
+    
+    # 显示传入的参数
+    if [ $# -gt 0 ]; then
+        print_info "传入参数: $*"
+    else
+        print_info "无传入参数"
+    fi
+    echo ""
+    
     # 解析命令行参数
+    debug_log "开始解析命令行参数"
     parse_args "$@"
+    debug_log "参数解析完成"
     
     # 解析环境预设
+    debug_log "开始解析环境预设"
     parse_env_preset
+    debug_log "环境预设解析完成"
     
     # 验证参数
+    debug_log "开始验证参数"
     validate_args
+    debug_log "参数验证完成"
     
     # 检查运行环境
+    debug_log "开始检查运行环境"
+    print_step "检查运行环境..."
+    
     check_root
+    debug_log "root权限检查完成"
+    
     detect_arch
+    debug_log "架构检测完成: $ARCH"
+    
     detect_os
+    debug_log "操作系统检测完成: $OS"
+    
+    # 显示系统信息
+    print_info "系统信息:"
+    print_info "  操作系统: $OS_NAME $OS_VERSION"
+    print_info "  架构: $(uname -m) -> $ARCH"
+    print_info "  内核: $(uname -r)"
+    print_info "  主机名: $(hostname)"
+    
+    # 检查网络环境
+    print_info "网络环境检查:"
+    if command -v ip >/dev/null 2>&1; then
+        local ip_addr=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+        print_info "  本机IP: ${ip_addr:-未知}"
+    fi
+    
+    if command -v curl >/dev/null 2>&1; then
+        print_info "  curl: $(curl --version | head -1 | cut -d' ' -f1-2)"
+    else
+        print_warn "  curl: 未安装"
+    fi
+    
+    if command -v wget >/dev/null 2>&1; then
+        print_info "  wget: $(wget --version | head -1 | cut -d' ' -f1-3)"
+    else
+        print_warn "  wget: 未安装"
+    fi
+    echo ""
     
     # 检查是否需要更新
+    debug_log "开始检查更新需求"
     check_update_needed
+    debug_log "更新需求检查完成: UPDATE_NEEDED=$UPDATE_NEEDED"
     
     if [ "$UPDATE_NEEDED" = false ]; then
         print_info "无需更新，脚本退出"
         exit 0
     fi
     
-    # 安装流程
+    # 显示安装计划
+    print_info "安装计划:"
+    print_info "  目标版本: $LATEST_VERSION"
+    print_info "  架构: $ARCH"
+    print_info "  安装路径: $INSTALL_DIR"
+    print_info "  配置目录: $CONFIG_DIR"
+    print_info "  日志目录: $LOG_DIR"
+    if [ -n "$SERVER_ID" ]; then
+        print_info "  服务器ID: $SERVER_ID"
+        print_info "  API地址: $API_BASE_URL"
+    fi
+    echo ""
+    
+    # 开始安装流程
+    debug_log "开始安装流程"
+    
     install_dependencies
+    debug_log "依赖安装完成"
+    
     stop_service_if_running
+    debug_log "服务停止完成"
+    
     download_and_install
+    debug_log "下载安装完成"
+    
     setup_config
+    debug_log "配置设置完成"
+    
     install_systemd_service
+    debug_log "systemd服务安装完成"
+    
     enable_and_start_service
+    debug_log "服务启动完成"
     
     # 检查安装结果
+    print_step "检查安装结果..."
     if check_service_status; then
+        debug_log "服务状态检查通过"
         show_post_install_info
+        print_info "安装成功完成！"
     else
-        print_error "安装完成但服务启动异常，请检查配置文件和日志"
+        print_error "安装完成但服务启动异常"
+        print_error "请检查以下内容："
+        print_error "  1. 配置文件: $CONFIG_DIR/config.yaml"
+        print_error "  2. 服务日志: journalctl -u $SERVICE_NAME -n 20"
+        print_error "  3. 应用日志: tail -f $LOG_DIR/agent.log"
+        
+        # 显示详细的错误诊断信息
+        print_error ""
+        print_error "详细诊断信息:"
+        
+        # 检查配置文件
+        if [ -f "$CONFIG_DIR/config.yaml" ]; then
+            print_error "配置文件存在: $CONFIG_DIR/config.yaml"
+        else
+            print_error "配置文件不存在: $CONFIG_DIR/config.yaml"
+        fi
+        
+        # 检查二进制文件
+        if [ -f "$INSTALL_DIR/nspass-agent" ]; then
+            print_error "二进制文件存在: $INSTALL_DIR/nspass-agent"
+            local file_info=$(ls -la "$INSTALL_DIR/nspass-agent")
+            print_error "文件信息: $file_info"
+        else
+            print_error "二进制文件不存在: $INSTALL_DIR/nspass-agent"
+        fi
+        
+        # 检查服务文件
+        if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
+            print_error "服务文件存在: /etc/systemd/system/$SERVICE_NAME.service"
+        else
+            print_error "服务文件不存在: /etc/systemd/system/$SERVICE_NAME.service"
+        fi
+        
+        # 显示最近的日志
+        print_error ""
+        print_error "最近的服务日志:"
+        journalctl -u $SERVICE_NAME -n 10 --no-pager 2>/dev/null || echo "无法获取服务日志"
+        
         exit 1
     fi
+    
+    debug_log "安装流程完全结束"
 }
 
 # 脚本入口

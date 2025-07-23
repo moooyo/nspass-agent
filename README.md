@@ -60,7 +60,10 @@ curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/ins
 # 自定义 API 端点
 curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | sudo bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
 
-# 5. 查看帮助
+# 启用调试模式安装（推荐用于问题诊断）
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | sudo DEBUG_MODE=1 bash -s -- -sid server001 -token abc123def456 -endpoint https://api.custom.com
+
+# 查看帮助
 curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- -h
 ```
 
