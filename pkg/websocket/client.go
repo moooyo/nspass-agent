@@ -13,18 +13,16 @@ import (
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // WebSocket通信协议说明：
-// 根据proto定义，NSPass WebSocket通信统一使用JSON格式进行数据交换
-// - 所有消息使用websocket.TextMessage类型发送
-// - 消息内容为JSON格式的WebSocketMessage结构
-// - 使用protojson进行序列化和反序列化
-// - 时间戳使用RFC3339格式
+// 根据proto定义，NSPass WebSocket通信统一使用Protocol Buffer二进制格式进行数据交换
+// - 所有消息使用websocket.BinaryMessage类型发送
+// - 消息内容为二进制格式的WebSocketMessage结构
+// - 使用proto.Marshal和proto.Unmarshal进行序列化和反序列化
 // - 支持重连机制和错误处理
 
 // Client WebSocket客户端
@@ -243,7 +241,7 @@ func (c *Client) readMessageLoop() {
 			// 设置读取超时
 			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
-			// 读取消息 - 根据proto定义统一使用TEXT消息类型和JSON格式
+			// 读取消息 - 使用二进制消息类型和Protocol Buffer格式
 			msgType, messageData, err := conn.ReadMessage()
 			if err != nil {
 				c.log.WithError(err).Error("读取WebSocket消息失败")
@@ -251,16 +249,16 @@ func (c *Client) readMessageLoop() {
 				return
 			}
 
-			// 检查消息类型，根据proto定义应该是TEXT消息
-			if msgType != websocket.TextMessage {
-				c.log.WithField("message_type", msgType).Warn("收到非文本消息，忽略")
+			// 检查消息类型，应该是二进制消息
+			if msgType != websocket.BinaryMessage {
+				c.log.WithField("message_type", msgType).Warn("收到非二进制消息，忽略")
 				continue
 			}
 
-			// 使用protojson解析JSON格式的WebSocket消息
+			// 使用proto.Unmarshal解析二进制格式的WebSocket消息
 			var wsMessage model.WebSocketMessage
-			if err := protojson.Unmarshal(messageData, &wsMessage); err != nil {
-				c.log.WithError(err).WithField("raw_message", string(messageData)).Error("解析WebSocket JSON消息失败")
+			if err := proto.Unmarshal(messageData, &wsMessage); err != nil {
+				c.log.WithError(err).WithField("message_size", len(messageData)).Error("解析WebSocket Protocol Buffer消息失败")
 				continue
 			}
 
@@ -687,15 +685,15 @@ func (c *Client) sendMessage(message *model.WebSocketMessage) {
 		return
 	}
 
-	// 使用protojson序列化消息为JSON格式，符合proto定义
-	messageData, err := protojson.Marshal(message)
+	// 使用proto.Marshal序列化消息为二进制格式
+	messageData, err := proto.Marshal(message)
 	if err != nil {
-		c.log.WithError(err).Error("序列化WebSocket消息为JSON失败")
+		c.log.WithError(err).Error("序列化WebSocket消息为Protocol Buffer失败")
 		return
 	}
 
-	// 根据proto定义发送文本消息（JSON格式）
-	if err := conn.WriteMessage(websocket.TextMessage, messageData); err != nil {
+	// 发送二进制消息
+	if err := conn.WriteMessage(websocket.BinaryMessage, messageData); err != nil {
 		c.log.WithError(err).Error("发送WebSocket消息失败")
 		c.handleConnectionError(err)
 		return
@@ -704,7 +702,8 @@ func (c *Client) sendMessage(message *model.WebSocketMessage) {
 	c.log.WithFields(logrus.Fields{
 		"message_id":   message.Id,
 		"message_type": message.Type.String(),
-	}).Debug("发送WebSocket JSON消息成功")
+		"message_size": len(messageData),
+	}).Debug("发送WebSocket Protocol Buffer消息成功")
 }
 
 // handleConnectionError 处理连接错误
