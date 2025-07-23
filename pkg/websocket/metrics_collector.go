@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nspass/nspass-agent/generated/model"
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/nspass/nspass-agent/pkg/proxy"
 	"github.com/shirou/gopsutil/v3/cpu"

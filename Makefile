@@ -140,6 +140,23 @@ proto-gen: proto-deps
 	fi
 	@echo "确保生成的代码不创建独立的go.mod..."
 	@rm -f $(GENERATED_DIR)/go.mod
+	@echo "创建适用于replace的go.mod文件..."
+	@echo "module github.com/moooyo/nspass-proto/generated" > $(GENERATED_DIR)/go.mod
+	@echo "" >> $(GENERATED_DIR)/go.mod
+	@echo "go 1.24" >> $(GENERATED_DIR)/go.mod
+	@echo "" >> $(GENERATED_DIR)/go.mod
+	@echo "require (" >> $(GENERATED_DIR)/go.mod
+	@echo "	google.golang.org/protobuf v1.36.6" >> $(GENERATED_DIR)/go.mod
+	@echo "	google.golang.org/genproto/googleapis/api v0.0.0-20250715232539-7130f93afb79" >> $(GENERATED_DIR)/go.mod
+	@echo "	google.golang.org/grpc v1.73.0" >> $(GENERATED_DIR)/go.mod
+	@echo ")" >> $(GENERATED_DIR)/go.mod
+	@echo "" >> $(GENERATED_DIR)/go.mod
+	@echo "require (" >> $(GENERATED_DIR)/go.mod
+	@echo "	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect" >> $(GENERATED_DIR)/go.mod
+	@echo "	golang.org/x/net v0.38.0 // indirect" >> $(GENERATED_DIR)/go.mod
+	@echo "	golang.org/x/sys v0.31.0 // indirect" >> $(GENERATED_DIR)/go.mod
+	@echo "	golang.org/x/text v0.23.0 // indirect" >> $(GENERATED_DIR)/go.mod
+	@echo ")" >> $(GENERATED_DIR)/go.mod
 	@echo "proto代码生成完成！"
 
 # 生成proto代码（别名）

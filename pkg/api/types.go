@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	model "github.com/nspass/nspass-agent/generated/model"
+	model "github.com/moooyo/nspass-proto/generated/model"
 )
 
 // ServerConfigData 服务器配置数据

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspass/nspass-agent/generated/model"
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/iptables"
 	"github.com/nspass/nspass-agent/pkg/logger"
