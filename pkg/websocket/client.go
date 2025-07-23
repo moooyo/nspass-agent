@@ -165,7 +165,8 @@ func (c *Client) connect() error {
 
 	// 设置请求头
 	headers := make(map[string][]string)
-	headers["Authorization"] = []string{"Bearer " + c.token}
+	headers["Server-ID"] = []string{c.agentID}
+	headers["Server-Token"] = []string{c.token}
 	headers["User-Agent"] = []string{"nspass-agent/1.0"}
 
 	// 建立连接

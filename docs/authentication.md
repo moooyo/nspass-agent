@@ -2,14 +2,14 @@
 
 ## 概述
 
-NSPass Agent 使用自定义的HTTP Header鉴权方式与后端API通信，而不是传统的Bearer Token方式。
+NSPass Agent 使用自定义的Server认证协议与后端API通信，基于Server-ID和Server-Token的Header认证方式。
 
 ## 鉴权方式
 
 每个API请求都会在HTTP Header中包含以下字段：
 
-- `X-Server-ID`: 服务器唯一标识符
-- `X-Token`: API访问令牌
+- `Server-ID`: 服务器唯一标识符
+- `Server-Token`: 服务器认证令牌
 - `Content-Type`: application/json
 
 ## 配置示例
@@ -47,8 +47,8 @@ apiClient := api.NewClient(cfg.API, cfg.ServerID)
 
 ```go
 func (c *Client) setAuthHeaders(req *http.Request) {
-    req.Header.Set("X-Server-ID", c.serverID)
-    req.Header.Set("X-Token", c.config.Token)
+    req.Header.Set("Server-ID", c.serverID)
+    req.Header.Set("Server-Token", c.config.Token)
     req.Header.Set("Content-Type", "application/json")
 }
 ```
@@ -64,8 +64,8 @@ func (c *Client) setAuthHeaders(req *http.Request) {
 
 如果鉴权失败，API会返回相应的HTTP状态码：
 
-- `401 Unauthorized`: Token无效或缺失
-- `403 Forbidden`: Server ID无效或没有权限
+- `401 Unauthorized`: Server-Token无效或缺失
+- `403 Forbidden`: Server-ID无效或没有权限
 - `400 Bad Request`: 请求格式错误
 
 ## 测试验证
@@ -82,9 +82,10 @@ nspass-agent --config /path/to/config.yaml --log-level debug
 
 ## 迁移指南
 
-从Bearer Token迁移到Header鉴权：
+从Bearer Token迁移到Server认证：
 
 1. 在配置文件中添加 `server_id` 字段
-2. 重启Agent服务
-3. 验证API调用正常工作
-4. 可选：清理旧的鉴权相关代码（如果有自定义修改） 
+2. 确保API Token正确配置在 `api.token` 字段
+3. 重启Agent服务
+4. 验证API调用正常工作
+5. 可选：清理旧的Bearer Token相关代码（如果有自定义修改） 
