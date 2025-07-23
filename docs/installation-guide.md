@@ -7,6 +7,10 @@
 ### 方式一：直接下载安装脚本（推荐）
 
 ```bash
+# 一行命令完成安装
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid 1 -token kuZp5DDPFtoRNE532eYAo23Jf1AledS8 -endpoint https://agent.nspass.xforward.de
+
+# 或者分步执行
 # 步骤1: 下载安装脚本
 curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh
 

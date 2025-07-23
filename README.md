@@ -23,23 +23,29 @@ NSPass Agent 是一个强大的代理服务管理工具，用于管理和监控�
 
 ### 一键安装（推荐）
 
-**方式一：直接下载安装（推荐，无管道问题）**
+**方式一：一行命令安装（推荐，最简单）**
 
 ```bash
-# 下载安装脚本
+# 一行命令完成安装 - 直接复制粘贴即可
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid your-server-id -token your-api-token -endpoint https://api.your-domain.com
+
+# 实际使用示例
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid 1 -token kuZp5DDPFtoRNE532eYAo23Jf1AledS8 -endpoint https://agent.nspass.xforward.de
+```
+
+**方式二：分步执行（适合调试）**
+
+```bash
+# 分步执行，便于调试
 curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh
-
-# 设置执行权限
 chmod +x install.sh
-
-# 执行安装（带参数）
 sudo DEBUG_MODE=1 ./install.sh -sid your-server-id -token your-api-token -endpoint https://api.your-domain.com
 
 # 或使用预设环境
 sudo DEBUG_MODE=1 ./install.sh -sid your-server-id -token your-api-token -env production
 ```
 
-**方式二：传统管道安装**
+**方式三：传统管道安装**
 
 如果你的环境支持管道安装，也可以使用：
 
@@ -70,25 +76,19 @@ curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/ins
 
 | 格式 | 命令 | 说明 |
 |------|------|------|
-| **直接下载（推荐）** | `curl -sSL install-url -o install.sh && chmod +x install.sh && sudo ./install.sh -sid server001 -token abc123 -env production` | 下载后执行，最可靠 |
-| **位置参数** | `curl -sSL install-url \| sudo bash -s server001 abc123 production` | 最短命令，按顺序传参 |
-| **自定义端点** | `curl -sSL install-url -o install.sh && sudo ./install.sh -sid server001 -token abc123 -endpoint https://api.custom.com` | 指定自定义API地址 |
+| **一行命令（推荐）** | `curl -sSL install-url -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid server001 -token abc123 -endpoint https://api.custom.com` | 最可靠，一次完成 |
+| **分步执行** | `下载 -> chmod +x -> 执行` | 便于调试和验证 |
+| **管道安装** | `curl -sSL install-url \| sudo bash -s -- ...` | 简洁但可能有问题 |
 
 ```bash
-# 实际使用示例（直接下载方式）
-curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh
-chmod +x install.sh
-sudo DEBUG_MODE=1 ./install.sh -sid 1 -token kuZp5DDPFtoRNE532eYAo23Jf1AledS8 -endpoint https://agent.nspass.xforward.de
+# 🔥 推荐：一行命令安装（直接复制使用）
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid 1 -token kuZp5DDPFtoRNE532eYAo23Jf1AledS8 -endpoint https://agent.nspass.xforward.de
 
-# 启用调试模式安装（推荐用于问题诊断）
-curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh
-chmod +x install.sh
-sudo DEBUG_MODE=1 ./install.sh -sid server001 -token abc123def456 -endpoint https://api.custom.com
+# 使用预设环境
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && sudo DEBUG_MODE=1 ./install.sh -sid server001 -token abc123def456 -env production
 
 # 查看帮助
-curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh
-chmod +x install.sh
-./install.sh -h
+curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh -o install.sh && chmod +x install.sh && ./install.sh -h
 ```
 
 ### 手动下载安装
