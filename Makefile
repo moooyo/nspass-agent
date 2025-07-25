@@ -136,7 +136,10 @@ install-proto-tools:
 check-proto-changed:
 	@if [ ! -f $(PROTO_TIMESTAMP_FILE) ]; then \
 		echo "📝 首次运行，需要生成 proto 文件"; \
-		touch $(PROTO_TIMESTAMP_FILE); \
+		exit 1; \
+	fi
+	@if [ ! -d $(GENERATED_DIR) ] || [ ! -f $(GENERATED_DIR)/go.mod ]; then \
+		echo "📝 检测到生成目录不完整，需要重新生成"; \
 		exit 1; \
 	fi
 	@if [ -n "$(PROTO_FILES)" ]; then \
