@@ -24,20 +24,32 @@ BINARY_PATH = $(OUTPUT_DIR)/$(BINARY_NAME)
 # Proto相关路径
 PROTO_DIR = proto
 GENERATED_DIR = generated
-PROTO_FILES = $(shell find $(PROTO_DIR) -name "*.proto")
+PROTO_FILES = $(shell find $(PROTO_DIR) -name "*.proto" 2>/dev/null || echo "")
 
 # 安装路径
 INSTALL_PATH = /usr/local/bin
 CONFIG_PATH = /etc/nspass
 SYSTEMD_PATH = /etc/systemd/system
 
-.PHONY: all build clean deep-clean test install uninstall deps lint format help proto-deps proto-gen gen-proto proto-clean build-all release release-github run
+# 设置PATH环境变量包含Go bin目录
+export PATH := $(PATH):$(shell go env GOPATH)/bin
+
+# Protobuf工具的版本要求
+PROTOC_GEN_GO_VERSION := latest
+PROTOC_GEN_GO_GRPC_VERSION := latest
+PROTOC_GEN_GRPC_GATEWAY_VERSION := latest
+PROTOC_GEN_OPENAPIV2_VERSION := latest
+
+# Proto文件监听标记文件
+PROTO_TIMESTAMP_FILE := .proto_timestamp
+
+.PHONY: all build clean deep-clean test install uninstall deps lint format help gen-proto gen-proto-force proto-clean build-all release release-github run check-proto-tools install-proto-tools check-proto-changed gen-proto-internal check-proto-env
 
 # 默认目标
-all: proto-clean proto-gen build
+all: proto-clean gen-proto build
 
 # 构建二进制文件
-build: proto-gen
+build: gen-proto
 	@echo "构建 $(BINARY_NAME)..."
 	@mkdir -p $(OUTPUT_DIR)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
@@ -58,6 +70,7 @@ deep-clean: clean proto-clean
 	@rm -rf dist/
 	@rm -rf release/
 	@rm -rf $(GENERATED_DIR)
+	@rm -f $(PROTO_TIMESTAMP_FILE)
 	@go clean -cache
 	@go clean -modcache
 	@echo "深度清理完成"
@@ -89,25 +102,56 @@ format:
 	@go fmt ./...
 	@go vet ./...
 
-# 安装proto依赖
-proto-deps:
-	@echo "检查proto依赖..."
+# 检查和安装protobuf工具
+check-proto-tools:
+	@echo "🔍 检查 protobuf 工具..."
 	@if ! command -v protoc >/dev/null 2>&1; then \
-		echo "错误: 请先安装 protoc"; \
+		echo "❌ protoc 未安装，请先安装 Protocol Buffers"; \
+		echo "Ubuntu/Debian: sudo apt-get install protobuf-compiler"; \
+		echo "macOS: brew install protobuf"; \
+		echo "或访问: https://grpc.io/docs/protoc-installation/"; \
 		exit 1; \
-	fi
-	@if ! command -v protoc-gen-go >/dev/null 2>&1; then \
-		echo "安装 protoc-gen-go..."; \
-		go install google.golang.org/protobuf/cmd/protoc-gen-go@latest; \
-	fi
-	@if ! command -v protoc-gen-go-grpc >/dev/null 2>&1; then \
-		echo "安装 protoc-gen-go-grpc..."; \
-		go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; \
+	else \
+		echo "✅ protoc 已安装: $$(protoc --version)"; \
 	fi
 
-# 生成proto代码
-proto-gen: proto-deps
-	@echo "生成proto代码..."
+# 安装protobuf Go插件
+install-proto-tools:
+	@echo "📦 安装/更新 protobuf Go 插件..."
+	@GOBIN=$(shell go env GOPATH)/bin go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	@GOBIN=$(shell go env GOPATH)/bin go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	@GOBIN=$(shell go env GOPATH)/bin go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@$(PROTOC_GEN_GRPC_GATEWAY_VERSION)
+	@GOBIN=$(shell go env GOPATH)/bin go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@$(PROTOC_GEN_OPENAPIV2_VERSION)
+	@echo "✅ protobuf Go 插件安装完成"
+	@echo "🔍 验证插件安装..."
+	@for tool in protoc-gen-go protoc-gen-go-grpc protoc-gen-grpc-gateway protoc-gen-openapiv2; do \
+		if command -v $$tool >/dev/null 2>&1; then \
+			echo "  ✅ $$tool: $$($$tool --version 2>/dev/null || echo 'installed')"; \
+		else \
+			echo "  ❌ $$tool: 未找到"; \
+		fi; \
+	done
+
+# 检查proto文件是否需要重新生成
+check-proto-changed:
+	@if [ ! -f $(PROTO_TIMESTAMP_FILE) ]; then \
+		echo "📝 首次运行，需要生成 proto 文件"; \
+		touch $(PROTO_TIMESTAMP_FILE); \
+		exit 1; \
+	fi
+	@if [ -n "$(PROTO_FILES)" ]; then \
+		for proto_file in $(PROTO_FILES); do \
+			if [ "$$proto_file" -nt $(PROTO_TIMESTAMP_FILE) ]; then \
+				echo "📝 检测到 proto 文件变更: $$proto_file"; \
+				exit 1; \
+			fi; \
+		done; \
+	fi
+	@echo "✅ Proto 文件未变更，跳过生成步骤"
+
+# 生成proto文件的内部实现
+gen-proto-internal: check-proto-tools install-proto-tools
+	@echo "🚀 生成 protobuf 代码..."
 	@echo "PROTO_DIR: $(PROTO_DIR)"
 	@echo "GENERATED_DIR: $(GENERATED_DIR)"
 	@mkdir -p $(GENERATED_DIR)
@@ -157,19 +201,48 @@ proto-gen: proto-deps
 	@echo "	golang.org/x/sys v0.31.0 // indirect" >> $(GENERATED_DIR)/go.mod
 	@echo "	golang.org/x/text v0.23.0 // indirect" >> $(GENERATED_DIR)/go.mod
 	@echo ")" >> $(GENERATED_DIR)/go.mod
-	@echo "proto代码生成完成！"
+	@touch $(PROTO_TIMESTAMP_FILE)
+	@echo "✅ protobuf 代码生成完成！"
+	@echo "📁 生成的 Go 代码: ./$(GENERATED_DIR)/"
 
-# 生成proto代码（别名）
-gen-proto: proto-gen
+# 智能生成proto文件（仅在有变更时生成）  
+gen-proto:
+	@$(MAKE) check-proto-changed || $(MAKE) gen-proto-internal
+
+# 强制重新生成proto文件
+gen-proto-force:
+	@echo "🔄 强制重新生成 protobuf 代码..."
+	@$(MAKE) gen-proto-internal
 
 # 清理proto生成的代码
 proto-clean:
 	@echo "清理proto生成的代码..."
 	@rm -rf $(GENERATED_DIR)
+	@rm -f $(PROTO_TIMESTAMP_FILE)
 	@echo "proto代码清理完成"
 
+# 交互式检查protobuf环境
+check-proto-env:
+	@echo "🔍 检查 protobuf 环境..."
+	@echo "📍 protoc 版本:"
+	@if command -v protoc >/dev/null 2>&1; then \
+		protoc --version; \
+	else \
+		echo "  ❌ protoc 未安装"; \
+	fi
+	@echo "📍 Go protobuf 插件:"
+	@for tool in protoc-gen-go protoc-gen-go-grpc protoc-gen-grpc-gateway protoc-gen-openapiv2; do \
+		if command -v $$tool >/dev/null 2>&1; then \
+			echo "  ✅ $$tool: 已安装"; \
+		else \
+			echo "  ❌ $$tool: 未安装"; \
+		fi; \
+	done
+	@echo "📍 GOPATH: $(shell go env GOPATH)"
+	@echo "📍 PATH 中是否包含 Go bin: $(if $(findstring $(shell go env GOPATH)/bin,$(PATH)),✅ 是,❌ 否)"
+
 # 多平台构建
-build-all: proto-gen
+build-all: gen-proto
 	@echo "构建所有平台版本..."
 	@mkdir -p $(OUTPUT_DIR)
 	@for os in linux darwin windows; do \
@@ -185,7 +258,7 @@ build-all: proto-gen
 	@echo "所有平台构建完成！"
 
 # 发布构建
-release: proto-gen
+release: gen-proto
 	@echo "执行发布构建..."
 	@./scripts/release.sh $(VERSION)
 
@@ -219,41 +292,40 @@ run: build
 
 # 显示帮助信息
 help:
-	@echo "NSPass Agent Makefile 使用说明："
+	@echo "📚 NSPass Agent Makefile 使用指南"
 	@echo ""
-	@echo "构建相关："
-	@echo "  build        构建二进制文件"
-	@echo "  build-all    构建所有平台版本"
-	@echo "  all          清理并重新构建（默认）"
+	@echo "🛠️  开发命令:"
+	@echo "  make run              - 运行开发服务器 (包含proto生成检查)"
+	@echo "  make build            - 构建项目"
+	@echo "  make build-all        - 构建所有平台版本"
+	@echo "  make all              - 清理并重新构建（默认）"
 	@echo ""
-	@echo "运行相关："
-	@echo "  run          运行Agent程序"
+	@echo "📄 Proto & 代码生成:"
+	@echo "  make gen-proto        - 智能生成protobuf代码 (仅在有变更时)"
+	@echo "  make gen-proto-force  - 强制重新生成protobuf代码"
 	@echo ""
-	@echo "发布相关："
-	@echo "  release      构建发布版本"
-	@echo "  release-github 发布到GitHub (需要GITHUB_TOKEN)"
+	@echo "🔧 工具安装:"
+	@echo "  make install-proto-tools - 安装/更新protobuf Go插件"
+	@echo "  make check-proto-tools   - 检查protobuf工具安装状态"
+	@echo "  make check-proto-env     - 检查protobuf环境"
 	@echo ""
-	@echo "测试相关："
-	@echo "  test         运行测试"
+	@echo "🧹 清理 & 维护:"
+	@echo "  make clean            - 清理构建文件"
+	@echo "  make deep-clean       - 深度清理（包括生成代码和缓存）"
+	@echo "  make proto-clean      - 清理proto生成的代码"
+	@echo "  make deps             - 下载Go依赖"
+	@echo "  make format           - 格式化Go代码"
+	@echo "  make lint             - 检查Go代码"
 	@echo ""
-	@echo "清理相关："
-	@echo "  clean        清理构建文件"
-	@echo "  deep-clean   深度清理（包括生成代码和缓存）"
-	@echo "  proto-clean  清理proto生成的代码"
+	@echo "🚀 发布相关:"
+	@echo "  make release          - 构建发布版本"
+	@echo "  make release-github   - 发布到GitHub (需要GITHUB_TOKEN)"
 	@echo ""
-	@echo "开发相关："
-	@echo "  lint         代码检查"
-	@echo "  format       格式化代码"
-	@echo "  deps         安装依赖"
+	@echo "🧪 测试相关:"
+	@echo "  make test             - 运行测试"
 	@echo ""
-	@echo "Proto相关："
-	@echo "  proto-deps   安装proto依赖"
-	@echo "  proto-gen    生成proto代码"
-	@echo "  gen-proto    生成proto代码（别名）"
+	@echo "💻 系统相关:"
+	@echo "  make install          - 安装到系统"
+	@echo "  make uninstall        - 从系统卸载"
 	@echo ""
-	@echo "系统相关："
-	@echo "  install      安装到系统"
-	@echo "  uninstall    从系统卸载"
-	@echo ""
-	@echo "其他："
-	@echo "  help         显示此帮助信息"
+	@echo "💡 提示: 运行 make run 会自动检查并安装必要的工具"

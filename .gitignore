@@ -35,6 +35,9 @@ release/
 # Generated proto files
 generated/
 
+# Proto build tracking
+.proto_timestamp
+
 # Binary files in root directory
 nspass-agent
 nspass-agent.exe
