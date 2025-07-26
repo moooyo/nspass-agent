@@ -50,6 +50,10 @@ type Client struct {
 	lastHeartbeat  time.Time
 	reconnectDelay time.Duration
 
+	// 重连相关
+	shouldReconnect bool
+	reconnectChan   chan struct{}
+
 	// 监控数据收集器
 	metricsCollector MetricsCollector
 
@@ -93,7 +97,9 @@ func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandle
 		iptablesManager:  iptablesManager,
 		proxyManager:     proxyManager,
 		messageBuffer:    make(chan *model.WebSocketMessage, 100),
-		reconnectDelay:   5 * time.Second,
+		reconnectDelay:   10 * time.Second, // 设置为10秒重连延迟
+		shouldReconnect:  true,
+		reconnectChan:    make(chan struct{}, 1),
 		log:              logger.GetComponentLogger("websocket-client"),
 	}
 }
@@ -102,7 +108,9 @@ func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandle
 func (c *Client) Start() error {
 	c.log.Info("启动WebSocket客户端")
 
-	c.connectionLoop()
+	// 启动重连循环协程
+	c.wg.Add(1)
+	go c.reconnectLoop()
 
 	// 启动读取消息的协程
 	c.wg.Add(1)
@@ -120,12 +128,18 @@ func (c *Client) Start() error {
 	c.wg.Add(1)
 	go c.metricsReportLoop()
 
+	// 触发初始连接
+	c.triggerReconnect()
+
 	return nil
 }
 
 // Stop 停止WebSocket客户端
 func (c *Client) Stop() error {
 	c.log.Info("停止WebSocket客户端")
+
+	// 停止重连
+	c.shouldReconnect = false
 
 	c.cancel()
 	c.wg.Wait()
@@ -138,45 +152,65 @@ func (c *Client) Stop() error {
 	c.connMu.Unlock()
 
 	close(c.messageBuffer)
+	close(c.reconnectChan)
 
 	c.log.Info("WebSocket客户端已停止")
 	return nil
 }
 
-// connectionLoop 连接管理循环
-func (c *Client) connectionLoop() (bool, error) {
-	retryCount := 0
-	maxRetryCount := 5
+// reconnectLoop 重连循环，负责处理连接状态和重连逻辑
+func (c *Client) reconnectLoop() {
+	defer c.wg.Done()
 
 	for {
 		select {
 		case <-c.ctx.Done():
-			return false, fmt.Errorf("连接循环已停止: %w", c.ctx.Err())
-		default:
-			if retryCount >= maxRetryCount {
-				c.log.Error("超过最大重试次数，停止连接尝试")
-				return false, fmt.Errorf("超过最大重试次数，停止连接尝试")
-			}
-
-			if c.isConnected() {
-				return true, nil
-			}
-
-			retryCount++
-
-			if err := c.connect(); err != nil {
-				c.log.WithError(err).Error("连接失败，等待重试")
-				time.Sleep(c.reconnectDelay)
+			c.log.Info("重连循环退出")
+			return
+		case <-c.reconnectChan:
+			if !c.shouldReconnect {
+				c.log.Info("重连已禁用，跳过重连")
 				continue
 			}
 
-			// 检查连接状态
-			time.Sleep(time.Second)
-
 			if c.isConnected() {
-				return true, nil
+				c.log.Debug("连接正常，无需重连")
+				continue
+			}
+
+			c.log.WithField("delay", c.reconnectDelay).Info("开始重连")
+
+			// 等待重连延迟
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-time.After(c.reconnectDelay):
+				// 继续重连
+			}
+
+			// 尝试重连
+			if err := c.connect(); err != nil {
+				c.log.WithError(err).Error("重连失败，将再次尝试")
+				// 重连失败，再次触发重连
+				c.triggerReconnect()
+			} else {
+				c.log.Info("重连成功")
 			}
 		}
+	}
+}
+
+// triggerReconnect 触发重连
+func (c *Client) triggerReconnect() {
+	if !c.shouldReconnect {
+		return
+	}
+
+	select {
+	case c.reconnectChan <- struct{}{}:
+		c.log.Debug("触发重连信号")
+	default:
+		c.log.Debug("重连信号已在队列中，跳过")
 	}
 }
 
@@ -263,10 +297,17 @@ func (c *Client) readMessageLoop() {
 		default:
 			c.connMu.RLock()
 			conn := c.conn
+			connected := c.connected
 			c.connMu.RUnlock()
 
-			if conn == nil {
-				return
+			// 如果没有连接，等待重连
+			if conn == nil || !connected {
+				select {
+				case <-c.ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
 			}
 
 			// 设置读取超时
@@ -277,7 +318,13 @@ func (c *Client) readMessageLoop() {
 			if err != nil {
 				c.log.WithError(err).Error("读取WebSocket消息失败")
 				c.handleConnectionError(err)
-				return
+				// 连接断开后等待重连，而不是退出循环
+				select {
+				case <-c.ctx.Done():
+					return
+				case <-time.After(time.Second):
+					continue
+				}
 			}
 
 			// 检查消息类型，应该是二进制消息
@@ -328,7 +375,7 @@ func (c *Client) processMessage(message *model.WebSocketMessage) {
 	c.log.WithFields(logrus.Fields{
 		"message_id":   message.MessageId,
 		"message_type": message.MessageType.String(),
-	}).Debug("处理WebSocket消息")
+	}).Info("处理WebSocket消息")
 
 	switch message.MessageType {
 	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_TASK:
@@ -655,21 +702,6 @@ func (c *Client) handleAckMessage(message *model.WebSocketMessage) {
 	// 实际实现中可以维护一个待确认消息的映射
 }
 
-// handleErrorMessage 处理错误消息
-func (c *Client) handleErrorMessage(message *model.WebSocketMessage) {
-	var errorMessage model.ErrorMessage
-	if err := message.Payload.UnmarshalTo(&errorMessage); err != nil {
-		c.log.WithError(err).Error("解析错误消息失败")
-		return
-	}
-
-	c.log.WithFields(logrus.Fields{
-		"error_code":    errorMessage.Code,
-		"error_message": errorMessage.Message,
-		"error_details": errorMessage.Details,
-	}).Error("收到错误消息")
-}
-
 // heartbeatLoop 心跳循环
 func (c *Client) heartbeatLoop() {
 	defer c.wg.Done()
@@ -682,8 +714,11 @@ func (c *Client) heartbeatLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
+			// 只在连接正常时发送心跳
 			if c.isConnected() {
 				c.sendHeartbeat()
+			} else {
+				c.log.Debug("连接未建立，跳过心跳发送")
 			}
 		}
 	}
@@ -890,6 +925,9 @@ func (c *Client) handleConnectionError(err error) {
 	}
 	c.connected = false
 	c.connMu.Unlock()
+
+	// 触发重连
+	c.triggerReconnect()
 }
 
 // isConnected 检查连接状态
