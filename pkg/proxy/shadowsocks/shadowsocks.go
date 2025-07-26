@@ -162,19 +162,18 @@ func (s *Shadowsocks) Start() error {
 
 	// 构建shadowsocks URL格式
 	// ss://method:password@server:port
-	server := config["server"].(string)
-	serverPort := fmt.Sprintf("%.0f", config["server_port"].(float64))
-	password := config["password"].(string)
-	method := config["method"].(string)
-	localAddr := config["local_address"].(string)
-	localPort := fmt.Sprintf("%.0f", config["local_port"].(float64))
+	// go-shadowsocks2 -s 'ss://AEAD_CHACHA20_POLY1305:your-password@:8488' -verbose
 
-	shadowsocksURL := fmt.Sprintf("ss://%s:%s@%s:%s", method, password, server, serverPort)
-	socksAddr := fmt.Sprintf("%s:%s", localAddr, localPort)
+	serverPort := *s.egressItem.Port
+	password := s.egressItem.Password
+
+	method := "AEAD_AES_128_GCM" // 默认加密方法
+
+	shadowsocksURL := fmt.Sprintf("ss://%s:%s@%s:%s", method, password, "", serverPort)
 
 	// 启动go-shadowsocks2客户端
 	binaryPath := filepath.Join(DefaultBinPath, "go-shadowsocks2")
-	cmd := exec.Command(binaryPath, "-c", shadowsocksURL, "-socks", socksAddr)
+	cmd := exec.Command(binaryPath, "-c", shadowsocksURL)
 
 	// 设置环境变量以便后台运行
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -185,7 +184,6 @@ func (s *Shadowsocks) Start() error {
 		logger.LogError(err, "启动shadowsocks失败", logrus.Fields{
 			"binary_path":     binaryPath,
 			"shadowsocks_url": shadowsocksURL,
-			"socks_addr":      socksAddr,
 		})
 		return fmt.Errorf("启动shadowsocks失败: %w", err)
 	}
@@ -209,7 +207,6 @@ func (s *Shadowsocks) Start() error {
 
 	log.WithFields(logrus.Fields{
 		"pid":         cmd.Process.Pid,
-		"socks_addr":  socksAddr,
 		"duration_ms": duration.Milliseconds(),
 	}).Info("shadowsocks服务已启动")
 
@@ -227,7 +224,7 @@ func (s *Shadowsocks) Stop() error {
 	pidData, err := os.ReadFile(s.pidFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Debug("PID文件不存在，shadowsocks可能已停止")
+			log.Debug("PID文件不存在, shadowsocks可能已停止")
 			return nil // PID文件不存在，说明已经停止
 		}
 		logger.LogError(err, "读取PID文件失败", logrus.Fields{

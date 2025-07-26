@@ -1,7 +1,6 @@
 package snell
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -77,29 +76,14 @@ func (s *Snell) Configure(cfg *model.EgressItem) error {
 		}
 	}
 
-	// 从EgressItem中解析配置
-	egressConfig := make(map[string]interface{})
-	if cfg.EgressConfig != "" {
-		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
-			log.WithError(err).Error("解析出口配置失败")
-			return fmt.Errorf("解析出口配置失败: %w", err)
-		}
-	}
-
 	// 生成snell配置
 	var configLines []string
 	configLines = append(configLines, "[snell-server]")
-	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%v", egressConfig["port"]))
-	configLines = append(configLines, fmt.Sprintf("psk = %s", egressConfig["psk"]))
+	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%v", *s.egressItem.Port))
+	configLines = append(configLines, fmt.Sprintf("psk = %s", *s.egressItem.Password))
 	configLines = append(configLines, "ipv6 = false")
-
-	// 可选配置
-	if obfs, ok := egressConfig["obfs"]; ok {
-		configLines = append(configLines, fmt.Sprintf("obfs = %s", obfs))
-	}
-
-	if obfsHost, ok := egressConfig["obfs-host"]; ok {
-		configLines = append(configLines, fmt.Sprintf("obfs-host = %s", obfsHost))
+	if s.egressItem.SupportUdp != nil && *s.egressItem.SupportUdp {
+		configLines = append(configLines, "udp = true")
 	}
 
 	configContent := strings.Join(configLines, "\n")
