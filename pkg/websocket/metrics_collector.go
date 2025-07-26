@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -561,76 +560,4 @@ func (c *DefaultMetricsCollector) getTCPConnectionsFromProc() (int, error) {
 	}).Debug("从/proc/net/tcp获取TCP连接统计")
 
 	return established, nil
-}
-
-// getNetworkSpeedFromProc 从/proc/net/dev读取网络速度（备用方法）
-func (c *DefaultMetricsCollector) getNetworkSpeedFromProc() (downloadSpeed, uploadSpeed float64, err error) {
-	file, err := os.Open("/proc/net/dev")
-	if err != nil {
-		return 0, 0, fmt.Errorf("打开/proc/net/dev失败: %w", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	var totalBytesRecv, totalBytesSent uint64
-
-	// 跳过前两行头信息
-	for i := 0; i < 2 && scanner.Scan(); i++ {
-	}
-
-	// 读取接口数据
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		fields := strings.Fields(line)
-
-		if len(fields) >= 10 {
-			// 跳过loopback接口
-			if strings.HasPrefix(fields[0], "lo:") {
-				continue
-			}
-
-			// 解析接收字节数（第2个字段）
-			if bytesRecv, err := strconv.ParseUint(strings.TrimSuffix(fields[1], ":"), 10, 64); err == nil {
-				totalBytesRecv += bytesRecv
-			}
-
-			// 解析发送字节数（第10个字段）
-			if len(fields) >= 10 {
-				if bytesSent, err := strconv.ParseUint(fields[9], 10, 64); err == nil {
-					totalBytesSent += bytesSent
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return 0, 0, fmt.Errorf("读取/proc/net/dev失败: %w", err)
-	}
-
-	currentStats := &NetworkStats{
-		BytesRecv: totalBytesRecv,
-		BytesSent: totalBytesSent,
-		Timestamp: time.Now(),
-	}
-
-	// 如果有上次的数据，计算速度
-	if c.lastNetworkStats != nil {
-		timeDiff := currentStats.Timestamp.Sub(c.lastNetworkStats.Timestamp).Seconds()
-		if timeDiff > 0 {
-			downloadSpeed = float64(currentStats.BytesRecv-c.lastNetworkStats.BytesRecv) / timeDiff
-			uploadSpeed = float64(currentStats.BytesSent-c.lastNetworkStats.BytesSent) / timeDiff
-		}
-	}
-
-	// 更新缓存
-	c.lastNetworkStats = currentStats
-
-	c.log.WithFields(logrus.Fields{
-		"download_speed_bps": downloadSpeed,
-		"upload_speed_bps":   uploadSpeed,
-		"total_bytes_recv":   totalBytesRecv,
-		"total_bytes_sent":   totalBytesSent,
-	}).Debug("从/proc/net/dev获取网络速度统计")
-
-	return downloadSpeed, uploadSpeed, nil
 }
