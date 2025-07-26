@@ -10,8 +10,11 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/api"
 	"github.com/nspass/nspass-agent/pkg/config"
+	"github.com/nspass/nspass-agent/pkg/iptables"
 	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/proxy"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -51,6 +54,12 @@ type Client struct {
 	// 监控数据收集器
 	metricsCollector MetricsCollector
 
+	// iptables管理器
+	iptablesManager iptables.ManagerInterface
+
+	// 代理管理器
+	proxyManager *proxy.Manager
+
 	log *logrus.Entry
 }
 
@@ -71,7 +80,7 @@ type MetricsCollector interface {
 }
 
 // NewClient 创建新的WebSocket客户端
-func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandler, metricsCollector MetricsCollector) *Client {
+func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandler, metricsCollector MetricsCollector, iptablesManager iptables.ManagerInterface, proxyManager *proxy.Manager) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Client{
@@ -82,6 +91,8 @@ func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandle
 		cancel:           cancel,
 		taskHandler:      taskHandler,
 		metricsCollector: metricsCollector,
+		iptablesManager:  iptablesManager,
+		proxyManager:     proxyManager,
 		messageBuffer:    make(chan *model.WebSocketMessage, 100),
 		reconnectDelay:   5 * time.Second,
 		log:              logger.GetComponentLogger("websocket-client"),
@@ -337,12 +348,180 @@ func (c *Client) processMessage(message *model.WebSocketMessage) {
 }
 
 func (c *Client) handleEgressConfig(message *model.WebSocketMessage) {
-	// 这里可以添加具体的处理逻辑，比如重新加载配置或发送错误消息
+	c.log.WithField("message_id", message.MessageId).Info("收到egress配置更新消息")
 
+	// 检查代理管理器是否可用
+	if c.proxyManager == nil {
+		c.log.Error("代理管理器未设置")
+		c.sendErrorAck(message.MessageId, "代理管理器未设置", "proxy manager not configured")
+		return
+	}
+
+	// 尝试解析不同类型的egress配置消息
+	var egressItems []*model.EgressItem
+	var err error
+
+	// 尝试解析为单个EgressItem
+	var singleItem model.EgressItem
+	if err = message.Payload.UnmarshalTo(&singleItem); err == nil {
+		egressItems = []*model.EgressItem{&singleItem}
+		c.log.WithField("egress_id", singleItem.EgressId).Info("解析单个egress配置")
+	} else {
+		// 尝试解析为EgressItem数组（假设有这样的包装结构）
+		c.log.WithError(err).Error("解析egress配置消息失败")
+		c.sendErrorAck(message.MessageId, "解析egress配置消息失败", err.Error())
+		return
+	}
+
+	c.log.WithField("egress_count", len(egressItems)).Info("解析egress配置完成")
+
+	// 转换proto配置为API配置
+	var egressConfigs []api.EgressConfig
+	for _, item := range egressItems {
+		egressConfig := api.ConvertProtoEgressItemToEgressConfig(item)
+		egressConfigs = append(egressConfigs, egressConfig)
+
+		c.log.WithFields(logrus.Fields{
+			"egress_id":   item.EgressId,
+			"egress_mode": item.EgressMode.String(),
+			"server_id":   item.ServerId,
+		}).Debug("转换egress配置")
+	}
+
+	// 转换为代理配置
+	var proxyConfigs []api.ProxyConfig
+	for _, egressConfig := range egressConfigs {
+		proxyConfig := api.ConvertEgressConfigToProxyConfig(egressConfig)
+		proxyConfigs = append(proxyConfigs, proxyConfig)
+
+		c.log.WithFields(logrus.Fields{
+			"egress_id":  egressConfig.EgressID,
+			"proxy_type": proxyConfig.Type,
+			"proxy_name": proxyConfig.Name,
+		}).Debug("转换为代理配置")
+	}
+
+	// 应用代理配置
+	if err := c.proxyManager.UpdateProxies(proxyConfigs); err != nil {
+		c.log.WithError(err).Error("应用egress配置失败")
+		c.sendErrorAck(message.MessageId, "应用egress配置失败", err.Error())
+		return
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"applied_egress":  len(egressItems),
+		"applied_proxies": len(proxyConfigs),
+	}).Info("egress配置应用成功")
+
+	// 发送成功确认
+	c.sendEgressConfigSuccessAck(message.MessageId, egressItems)
+}
+
+// sendEgressConfigSuccessAck 发送egress配置成功确认
+func (c *Client) sendEgressConfigSuccessAck(messageID string, egressItems []*model.EgressItem) {
+	// 创建成功结果数据
+	resultMap := map[string]interface{}{
+		"applied_egress_count": len(egressItems),
+		"applied_at":           time.Now().Unix(),
+		"status":               "success",
+		"message":              "egress配置应用成功",
+	}
+
+	// 添加详细的egress信息
+	egressDetails := make([]map[string]interface{}, 0, len(egressItems))
+	for _, item := range egressItems {
+		detail := map[string]interface{}{
+			"egress_id":   item.EgressId,
+			"egress_mode": item.EgressMode.String(),
+			"server_id":   item.ServerId,
+		}
+		if item.EgressName != "" {
+			detail["egress_name"] = item.EgressName
+		}
+		egressDetails = append(egressDetails, detail)
+	}
+	resultMap["egress_details"] = egressDetails
+
+	// 获取代理状态摘要
+	if proxyStatus := c.proxyManager.GetStatus(); proxyStatus != nil {
+		resultMap["proxy_status"] = proxyStatus
+	}
+
+	ackMessage := &model.AckMessage{
+		MessageId: messageID,
+		Success:   true,
+	}
+
+	c.sendAckMessage(ackMessage)
 }
 
 func (c *Client) handleIptablesConfig(message *model.WebSocketMessage) {
-	// 这里可以添加具体的处理逻辑，比如重新加载iptables规则或发送错误消息
+	c.log.WithField("message_id", message.MessageId).Info("收到iptables配置更新消息")
+
+	// 检查iptables管理器是否可用
+	if c.iptablesManager == nil {
+		c.log.Error("iptables管理器未设置")
+		c.sendErrorAck(message.MessageId, "iptables管理器未设置", "iptables manager not configured")
+		return
+	}
+
+	// 解析iptables服务器配置消息
+	var serverConfig model.IptablesServerConfig
+	if err := message.Payload.UnmarshalTo(&serverConfig); err != nil {
+		c.log.WithError(err).Error("解析iptables配置消息失败")
+		c.sendErrorAck(message.MessageId, "解析iptables配置消息失败", err.Error())
+		return
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"server_id":      serverConfig.ServerId,
+		"server_name":    serverConfig.ServerName,
+		"total_configs":  serverConfig.TotalConfigs,
+		"active_configs": serverConfig.ActiveConfigs,
+		"configs_count":  len(serverConfig.Configs),
+	}).Info("解析iptables配置完成")
+
+	// 应用iptables配置
+	if err := c.iptablesManager.UpdateRulesFromProto(serverConfig.Configs); err != nil {
+		c.log.WithError(err).Error("应用iptables配置失败")
+		c.sendErrorAck(message.MessageId, "应用iptables配置失败", err.Error())
+		return
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"server_id":     serverConfig.ServerId,
+		"applied_rules": len(serverConfig.Configs),
+	}).Info("iptables配置应用成功")
+
+	// 发送成功确认
+	c.sendConfigSuccessAck(message.MessageId, &serverConfig)
+}
+
+// sendConfigSuccessAck 发送配置成功确认
+func (c *Client) sendConfigSuccessAck(messageID string, serverConfig *model.IptablesServerConfig) {
+	// 创建成功结果数据
+	resultMap := map[string]interface{}{
+		"server_id":      serverConfig.ServerId,
+		"server_name":    serverConfig.ServerName,
+		"applied_rules":  len(serverConfig.Configs),
+		"total_configs":  serverConfig.TotalConfigs,
+		"active_configs": serverConfig.ActiveConfigs,
+		"applied_at":     time.Now().Unix(),
+		"status":         "success",
+		"message":        "iptables配置应用成功",
+	}
+
+	// 获取规则摘要信息
+	if rulesSummary := c.iptablesManager.GetRulesSummary(); rulesSummary != nil {
+		resultMap["rules_summary"] = rulesSummary
+	}
+
+	ackMessage := &model.AckMessage{
+		MessageId: messageID,
+		Success:   true,
+	}
+
+	c.sendAckMessage(ackMessage)
 }
 
 // handleTaskMessage 处理任务消息

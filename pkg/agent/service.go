@@ -76,7 +76,7 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 	metricsCollector := websocket.NewDefaultMetricsCollector(proxyManager)
 
 	// 创建WebSocket客户端
-	wsClient := websocket.NewClient(cfg, serverID, cfg.API.Token, taskHandler, metricsCollector)
+	wsClient := websocket.NewClient(cfg, serverID, cfg.API.Token, taskHandler, metricsCollector, iptablesManager, proxyManager)
 
 	// 设置任务统计提供者，用于监控数据收集
 	wsClient.SetTaskStatsProvider()

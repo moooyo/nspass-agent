@@ -305,7 +305,7 @@ func ConvertForwardRuleFromProto(rule *model.ForwardRule) ForwardRuleConfig {
 func ConvertProtoIptablesConfigToRuleParts(config *model.IptablesConfig) (table, chain, rule string) {
 	table = config.TableName
 	chain = config.ChainName
-	
+
 	var parts []string
 
 	// 添加协议
@@ -350,4 +350,85 @@ func ConvertProtoIptablesConfigToRuleParts(config *model.IptablesConfig) (table,
 
 	rule = strings.Join(parts, " ")
 	return table, chain, rule
+}
+
+// ConvertProtoEgressItemToEgressConfig 将proto EgressItem转换为API EgressConfig
+func ConvertProtoEgressItemToEgressConfig(item *model.EgressItem) EgressConfig {
+	config := EgressConfig{
+		ID:           fmt.Sprintf("%d", item.Id),
+		EgressID:     item.EgressId,
+		ServerID:     item.ServerId,
+		EgressMode:   item.EgressMode.String(),
+		EgressConfig: item.EgressConfig,
+	}
+
+	// 处理可选字段
+	if item.TargetAddress != nil {
+		config.TargetAddress = *item.TargetAddress
+	}
+	if item.ForwardType != nil {
+		config.ForwardType = item.ForwardType.String()
+	}
+	if item.DestAddress != nil {
+		config.DestAddress = *item.DestAddress
+	}
+	if item.DestPort != nil {
+		config.DestPort = *item.DestPort
+	}
+	if item.Password != nil {
+		config.Password = *item.Password
+	}
+	if item.SupportUdp != nil {
+		config.SupportUDP = *item.SupportUdp
+	}
+
+	return config
+}
+
+// ConvertEgressConfigToProxyConfig 将EgressConfig转换为ProxyConfig
+func ConvertEgressConfigToProxyConfig(egress EgressConfig) ProxyConfig {
+	proxyConfig := ProxyConfig{
+		ID:      egress.EgressID,
+		Name:    egress.EgressID,
+		Enabled: true, // egress配置默认启用
+		Config:  make(map[string]interface{}),
+	}
+
+	// 根据egress模式设置代理类型
+	switch egress.EgressMode {
+	case "EGRESS_MODE_SS2022":
+		proxyConfig.Type = "shadowsocks"
+		if egress.Password != "" {
+			proxyConfig.Config["password"] = egress.Password
+		}
+		if egress.SupportUDP {
+			proxyConfig.Config["support_udp"] = egress.SupportUDP
+		}
+	case "EGRESS_MODE_DIRECT":
+		proxyConfig.Type = "direct"
+		if egress.TargetAddress != "" {
+			proxyConfig.Config["target_address"] = egress.TargetAddress
+		}
+	case "EGRESS_MODE_IPTABLES":
+		proxyConfig.Type = "iptables"
+		if egress.DestAddress != "" {
+			proxyConfig.Config["dest_address"] = egress.DestAddress
+		}
+		if egress.DestPort != "" {
+			proxyConfig.Config["dest_port"] = egress.DestPort
+		}
+		if egress.ForwardType != "" {
+			proxyConfig.Config["forward_type"] = egress.ForwardType
+		}
+	default:
+		proxyConfig.Type = "unknown"
+	}
+
+	// 添加通用配置
+	if egress.EgressConfig != "" {
+		proxyConfig.Config["egress_config"] = egress.EgressConfig
+	}
+	proxyConfig.Config["server_id"] = egress.ServerID
+
+	return proxyConfig
 }
