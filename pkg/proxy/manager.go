@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspass/nspass-agent/pkg/api"
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/nspass/nspass-agent/pkg/proxy/shadowsocks"
@@ -18,7 +18,7 @@ import (
 // ProxyInterface 代理接口
 type ProxyInterface interface {
 	Install() error
-	Configure(config map[string]interface{}) error
+	Configure(config *model.EgressItem) error
 	Start() error
 	Stop() error
 	Status() (string, error)
@@ -28,7 +28,6 @@ type ProxyInterface interface {
 
 // Manager 代理管理器
 type Manager struct {
-	config  config.ProxyConfig
 	proxies map[string]ProxyInterface
 	monitor *ProxyMonitor // 进程监控器
 	mu      sync.RWMutex
@@ -37,7 +36,6 @@ type Manager struct {
 // NewManager 创建新的代理管理器
 func NewManager(cfg config.ProxyConfig) *Manager {
 	manager := &Manager{
-		config:  cfg,
 		proxies: make(map[string]ProxyInterface),
 		monitor: NewProxyMonitor(cfg.Monitor), // 初始化监控器
 	}
@@ -67,42 +65,38 @@ func NewManager(cfg config.ProxyConfig) *Manager {
 }
 
 // getProxyInstance 获取代理实例
-func (m *Manager) getProxyInstance(proxyType string) (ProxyInterface, error) {
+func (m *Manager) getProxyInstance(config *model.EgressItem) (ProxyInterface, error) {
 	log := logger.GetProxyLogger()
 
 	// 检查类型是否支持
 	supported := false
-	for _, enabledType := range m.config.EnabledTypes {
-		if enabledType == proxyType {
-			supported = true
-			break
-		}
+	if config.EgressMode == model.EgressMode_EGRESS_MODE_SS2022 {
+		supported = true
 	}
 
 	if !supported {
 		log.WithFields(logrus.Fields{
-			"proxy_type":    proxyType,
-			"enabled_types": m.config.EnabledTypes,
+			"proxy_type": config.EgressMode,
 		}).Warn("不支持的代理类型")
-		return nil, fmt.Errorf("不支持的代理类型: %s", proxyType)
+		return nil, fmt.Errorf("不支持的代理类型: %s", config.EgressMode)
 	}
 
 	// 创建代理实例
-	switch proxyType {
-	case "shadowsocks":
-		return shadowsocks.New(m.config), nil
-	case "trojan":
-		return trojan.New(m.config), nil
-	case "snell":
-		return snell.New(m.config), nil
+	switch config.EgressMode {
+	case model.EgressMode_EGRESS_MODE_SS2022:
+		return shadowsocks.New(config), nil
+	case model.EgressMode_EGRESS_MODE_TROJAN:
+		return trojan.New(config), nil
+	case model.EgressMode_EGRESS_MODE_SNELL:
+		return snell.New(config), nil
 	default:
-		log.WithField("proxy_type", proxyType).Warn("不支持的代理类型")
-		return nil, fmt.Errorf("不支持的代理类型: %s", proxyType)
+		log.WithField("proxy_type", config.EgressMode).Warn("不支持的代理类型")
+		return nil, fmt.Errorf("不支持的代理类型: %s", config.EgressMode)
 	}
 }
 
 // UpdateProxies 更新代理配置
-func (m *Manager) UpdateProxies(configs []api.ProxyConfig) error {
+func (m *Manager) UpdateProxies(configs []*model.EgressItem) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -120,42 +114,23 @@ func (m *Manager) UpdateProxies(configs []api.ProxyConfig) error {
 
 	for _, cfg := range configs {
 		proxyLog := log.WithFields(logrus.Fields{
-			"proxy_id":   cfg.ID,
-			"proxy_type": cfg.Type,
-			"proxy_name": cfg.Name,
-			"enabled":    cfg.Enabled,
+			"proxy_id":   cfg.EgressId,
+			"proxy_type": cfg.EgressMode,
+			"proxy_name": cfg.EgressName,
 		})
 
-		configuredProxyIDs[cfg.ID] = true
-
-		if !cfg.Enabled {
-			proxyLog.Debug("代理已禁用，从监控器移除")
-			// 停止并移除禁用的代理
-			if existing, exists := m.proxies[cfg.ID]; exists {
-				if err := existing.Stop(); err != nil {
-					logger.LogError(err, "停止禁用的代理失败", logrus.Fields{
-						"proxy_id": cfg.ID,
-					})
-				}
-				delete(m.proxies, cfg.ID)
-			}
-			// 从监控器中取消注册
-			if m.monitor != nil {
-				m.monitor.UnregisterProxy(cfg.ID)
-			}
-			continue
-		}
+		configuredProxyIDs[cfg.EgressId] = true
 
 		proxyLog.Info("开始配置代理")
 
 		if err := m.configureProxy(cfg); err != nil {
 			errorCount++
-			errorMsg := fmt.Sprintf("配置代理 %s(%s) 失败: %v", cfg.Type, cfg.ID, err)
+			errorMsg := fmt.Sprintf("配置代理 %s(%s) 失败: %v", cfg.EgressMode, cfg.EgressId, err)
 			errors = append(errors, errorMsg)
 			logger.LogError(err, "配置代理失败", logrus.Fields{
-				"proxy_id":   cfg.ID,
-				"proxy_type": cfg.Type,
-				"proxy_name": cfg.Name,
+				"proxy_id":   cfg.EgressId,
+				"proxy_type": cfg.EgressMode,
+				"proxy_name": cfg.EgressName,
 			})
 		} else {
 			successCount++
@@ -207,25 +182,25 @@ func (m *Manager) UpdateProxies(configs []api.ProxyConfig) error {
 }
 
 // configureProxy 配置单个代理
-func (m *Manager) configureProxy(cfg api.ProxyConfig) error {
+func (m *Manager) configureProxy(cfg *model.EgressItem) error {
 	log := logger.GetProxyLogger().WithFields(logrus.Fields{
-		"proxy_id":   cfg.ID,
-		"proxy_type": cfg.Type,
+		"proxy_id":   cfg.EgressId,
+		"proxy_type": cfg.EgressMode,
 	})
 
 	// 停止已存在的代理
-	if existing, exists := m.proxies[cfg.ID]; exists {
+	if existing, exists := m.proxies[cfg.EgressId]; exists {
 		log.Debug("停止现有代理")
 		if err := existing.Stop(); err != nil {
 			logger.LogError(err, "停止现有代理失败", logrus.Fields{
-				"proxy_id":   cfg.ID,
-				"proxy_type": cfg.Type,
+				"proxy_id":   cfg.EgressId,
+				"proxy_type": cfg.EgressMode,
 			})
 		}
 	}
 
 	// 获取代理实例
-	proxy, err := m.getProxyInstance(cfg.Type)
+	proxy, err := m.getProxyInstance(cfg)
 	if err != nil {
 		return err
 	}
@@ -237,14 +212,14 @@ func (m *Manager) configureProxy(cfg api.ProxyConfig) error {
 
 		if err := proxy.Install(); err != nil {
 			logger.LogError(err, "安装代理软件失败", logrus.Fields{
-				"proxy_type": cfg.Type,
+				"proxy_type": cfg.EgressMode,
 			})
-			return fmt.Errorf("安装 %s 代理软件失败: %w", cfg.Type, err)
+			return fmt.Errorf("安装 %s 代理软件失败: %w", cfg.EgressMode, err)
 		}
 
 		installDuration := time.Since(installStart)
 		logger.LogPerformance("proxy_install", installDuration, logrus.Fields{
-			"proxy_type": cfg.Type,
+			"proxy_type": cfg.EgressMode,
 		})
 
 		log.WithField("duration_ms", installDuration.Milliseconds()).Info("代理软件安装完成")
@@ -252,35 +227,33 @@ func (m *Manager) configureProxy(cfg api.ProxyConfig) error {
 
 	// 配置代理
 	log.Debug("开始配置代理")
-	if err := proxy.Configure(cfg.Config); err != nil {
+	if err := proxy.Configure(cfg); err != nil {
 		logger.LogError(err, "配置代理失败", logrus.Fields{
-			"proxy_id":   cfg.ID,
-			"proxy_type": cfg.Type,
+			"proxy_id":   cfg.EgressId,
+			"proxy_type": cfg.EgressMode,
 		})
-		return fmt.Errorf("配置 %s 代理失败: %w", cfg.Type, err)
+		return fmt.Errorf("配置 %s 代理失败: %w", cfg.EgressMode, err)
 	}
 
 	// 启动代理服务
-	if m.config.AutoStart {
-		log.Debug("自动启动代理服务")
-		if err := proxy.Start(); err != nil {
-			logger.LogError(err, "启动代理服务失败", logrus.Fields{
-				"proxy_id":   cfg.ID,
-				"proxy_type": cfg.Type,
-			})
-			return fmt.Errorf("启动 %s 代理服务失败: %w", cfg.Type, err)
-		}
+	log.Debug("启动代理服务")
+	if err := proxy.Start(); err != nil {
+		logger.LogError(err, "启动代理服务失败", logrus.Fields{
+			"proxy_id":   cfg.EgressId,
+			"proxy_type": cfg.EgressMode,
+		})
+		return fmt.Errorf("启动 %s 代理服务失败: %w", cfg.EgressMode, err)
 	}
 
 	// 保存代理实例
-	m.proxies[cfg.ID] = proxy
+	m.proxies[cfg.EgressId] = proxy
 
 	// 注册到监控器
-	m.monitor.RegisterProxy(cfg.ID, cfg.Type, proxy, cfg.Config)
+	m.monitor.RegisterProxy(cfg, proxy)
 
 	// 记录状态变更
 	logger.LogStateChange("proxy", "unconfigured", "configured",
-		fmt.Sprintf("代理 %s(%s) 配置完成", cfg.Type, cfg.ID))
+		fmt.Sprintf("代理 %s(%s) 配置完成", cfg.EgressMode, cfg.EgressId))
 
 	log.Info("代理配置和启动完成")
 	return nil
@@ -309,7 +282,6 @@ func (m *Manager) GetStatus() map[string]interface{} {
 	summary := map[string]interface{}{
 		"total_proxies": len(m.proxies),
 		"statuses":      statuses,
-		"config":        m.config,
 	}
 
 	log.WithField("summary", summary).Debug("代理状态获取完成")

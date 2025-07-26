@@ -10,20 +10,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nspass/nspass-agent/pkg/config"
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
 // Snell snell代理实现
 type Snell struct {
-	config     config.ProxyConfig
+	config     *model.EgressItem
 	configPath string
 	pidFile    string
 }
 
 // New 创建新的Snell实例
-func New(cfg config.ProxyConfig) *Snell {
+func New(cfg *model.EgressItem) *Snell {
 	s := &Snell{
 		config:     cfg,
 		configPath: filepath.Join(cfg.ConfigPath, "snell.conf"),
@@ -122,7 +122,7 @@ func (s *Snell) Uninstall() error {
 }
 
 // Configure 配置snell
-func (s *Snell) Configure(cfg map[string]interface{}) error {
+func (s *Snell) Configure(cfg *model.EgressItem) error {
 	startTime := time.Now()
 	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
 

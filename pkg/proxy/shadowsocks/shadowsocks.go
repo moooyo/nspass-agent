@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -22,7 +23,7 @@ type Shadowsocks struct {
 }
 
 // New 创建新的Shadowsocks实例
-func New(cfg config.ProxyConfig) *Shadowsocks {
+func New(cfg *model.EgressItem) *Shadowsocks {
 	ss := &Shadowsocks{
 		config:     cfg,
 		configPath: filepath.Join(cfg.ConfigPath, "shadowsocks.json"),
@@ -136,7 +137,7 @@ func (s *Shadowsocks) Uninstall() error {
 }
 
 // Configure 配置shadowsocks
-func (s *Shadowsocks) Configure(cfg map[string]interface{}) error {
+func (s *Shadowsocks) Configure(cfg *model.EgressItem) error {
 	startTime := time.Now()
 	log := logger.GetProxyLogger().WithField("proxy_type", "shadowsocks")
 

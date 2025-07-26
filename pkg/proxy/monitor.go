@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -12,17 +13,17 @@ import (
 
 // ProxyState 代理状态信息
 type ProxyState struct {
-	ID             string                 // 代理ID
-	Type           string                 // 代理类型
-	Instance       ProxyInterface         // 代理实例
-	Config         map[string]interface{} // 代理配置
-	LastCheck      time.Time              // 上次检查时间
-	LastRestart    time.Time              // 上次重启时间
-	Status         string                 // 当前状态: running, stopped, crashed, restarting
-	RestartCount   int                    // 重启次数
-	RestartHistory []RestartRecord        // 重启历史记录
-	Enabled        bool                   // 是否启用
-	mu             sync.RWMutex           // 状态锁
+	ID             string            // 代理ID
+	Type           model.EgressMode  // 代理类型
+	Instance       ProxyInterface    // 代理实例
+	Config         *model.EgressItem // 代理配置
+	LastCheck      time.Time         // 上次检查时间
+	LastRestart    time.Time         // 上次重启时间
+	Status         string            // 当前状态: running, stopped, crashed, restarting
+	RestartCount   int               // 重启次数
+	RestartHistory []RestartRecord   // 重启历史记录
+	Enabled        bool              // 是否启用
+	mu             sync.RWMutex      // 状态锁
 }
 
 // RestartRecord 重启记录
@@ -167,13 +168,13 @@ func NewProxyMonitor(config config.MonitorConfig) *ProxyMonitor {
 }
 
 // RegisterProxy 注册代理进行监控
-func (pm *ProxyMonitor) RegisterProxy(id, proxyType string, instance ProxyInterface, config map[string]interface{}) {
+func (pm *ProxyMonitor) RegisterProxy(config *model.EgressItem, instance ProxyInterface) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	state := &ProxyState{
-		ID:             id,
-		Type:           proxyType,
+		ID:             config.EgressId,
+		Type:           config.EgressMode,
 		Instance:       instance,
 		Config:         config,
 		LastCheck:      time.Now(),
@@ -183,11 +184,11 @@ func (pm *ProxyMonitor) RegisterProxy(id, proxyType string, instance ProxyInterf
 		Enabled:        true,
 	}
 
-	pm.states[id] = state
+	pm.states[config.EgressId] = state
 
 	pm.log.WithFields(logrus.Fields{
-		"proxy_id":   id,
-		"proxy_type": proxyType,
+		"proxy_id":   config.EgressId,
+		"proxy_type": config.EgressMode,
 	}).Info("代理已注册到监控器")
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/api"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/iptables"
 	"github.com/nspass/nspass-agent/pkg/logger"
@@ -357,64 +356,27 @@ func (c *Client) handleEgressConfig(message *model.WebSocketMessage) {
 		return
 	}
 
-	// 尝试解析不同类型的egress配置消息
-	var egressItems []*model.EgressItem
-	var err error
-
 	// 尝试解析为单个EgressItem
-	var singleItem model.EgressItem
-	if err = message.Payload.UnmarshalTo(&singleItem); err == nil {
-		egressItems = []*model.EgressItem{&singleItem}
-		c.log.WithField("egress_id", singleItem.EgressId).Info("解析单个egress配置")
-	} else {
-		// 尝试解析为EgressItem数组（假设有这样的包装结构）
-		c.log.WithError(err).Error("解析egress配置消息失败")
-		c.sendErrorAck(message.MessageId, "解析egress配置消息失败", err.Error())
+	var agentEgressConfigs model.AgentEgressConfigs
+	if err := message.Payload.UnmarshalTo(&agentEgressConfigs); err != nil {
+		c.log.WithField("message_id", message.MessageId).Error("解析agentEgressConfigs消息失败")
+		c.sendErrorAck(message.MessageId, "解析agentEgressConfigs消息失败", err.Error())
 		return
 	}
 
-	c.log.WithField("egress_count", len(egressItems)).Info("解析egress配置完成")
-
-	// 转换proto配置为API配置
-	var egressConfigs []api.EgressConfig
-	for _, item := range egressItems {
-		egressConfig := api.ConvertProtoEgressItemToEgressConfig(item)
-		egressConfigs = append(egressConfigs, egressConfig)
-
-		c.log.WithFields(logrus.Fields{
-			"egress_id":   item.EgressId,
-			"egress_mode": item.EgressMode.String(),
-			"server_id":   item.ServerId,
-		}).Debug("转换egress配置")
-	}
-
-	// 转换为代理配置
-	var proxyConfigs []api.ProxyConfig
-	for _, egressConfig := range egressConfigs {
-		proxyConfig := api.ConvertEgressConfigToProxyConfig(egressConfig)
-		proxyConfigs = append(proxyConfigs, proxyConfig)
-
-		c.log.WithFields(logrus.Fields{
-			"egress_id":  egressConfig.EgressID,
-			"proxy_type": proxyConfig.Type,
-			"proxy_name": proxyConfig.Name,
-		}).Debug("转换为代理配置")
-	}
+	c.log.WithField("egress_count", len(agentEgressConfigs.EgressItems)).Info("解析egress配置完成")
 
 	// 应用代理配置
-	if err := c.proxyManager.UpdateProxies(proxyConfigs); err != nil {
+	if err := c.proxyManager.UpdateProxies(agentEgressConfigs.EgressItems); err != nil {
 		c.log.WithError(err).Error("应用egress配置失败")
 		c.sendErrorAck(message.MessageId, "应用egress配置失败", err.Error())
 		return
 	}
 
-	c.log.WithFields(logrus.Fields{
-		"applied_egress":  len(egressItems),
-		"applied_proxies": len(proxyConfigs),
-	}).Info("egress配置应用成功")
+	c.log.Info("egress配置应用成功")
 
 	// 发送成功确认
-	c.sendEgressConfigSuccessAck(message.MessageId, egressItems)
+	c.sendEgressConfigSuccessAck(message.MessageId, agentEgressConfigs.EgressItems)
 }
 
 // sendEgressConfigSuccessAck 发送egress配置成功确认

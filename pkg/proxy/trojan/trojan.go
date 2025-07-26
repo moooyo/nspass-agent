@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -23,7 +24,7 @@ type Trojan struct {
 }
 
 // New 创建新的Trojan实例
-func New(cfg config.ProxyConfig) *Trojan {
+func New(cfg *model.EgressItem) *Trojan {
 	t := &Trojan{
 		config:     cfg,
 		configPath: filepath.Join(cfg.ConfigPath, "trojan.json"),
@@ -122,7 +123,7 @@ func (t *Trojan) Uninstall() error {
 }
 
 // Configure 配置trojan
-func (t *Trojan) Configure(cfg map[string]interface{}) error {
+func (t *Trojan) Configure(cfg *model.EgressItem) error {
 	startTime := time.Now()
 	log := logger.GetProxyLogger().WithField("proxy_type", "trojan")
 
