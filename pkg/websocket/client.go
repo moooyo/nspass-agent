@@ -92,9 +92,11 @@ func NewClient(cfg *config.Config, agentID, token string, taskHandler TaskHandle
 func (c *Client) Start() error {
 	c.log.Info("启动WebSocket客户端")
 
-	// 启动连接协程
+	c.connectionLoop()
+
+	// 启动读取消息的协程
 	c.wg.Add(1)
-	go c.connectionLoop()
+	go c.readMessageLoop()
 
 	// 启动消息处理协程
 	c.wg.Add(1)
@@ -132,24 +134,38 @@ func (c *Client) Stop() error {
 }
 
 // connectionLoop 连接管理循环
-func (c *Client) connectionLoop() {
-	defer c.wg.Done()
+func (c *Client) connectionLoop() (bool, error) {
+	retryCount := 0
+	maxRetryCount := 5
 
 	for {
 		select {
 		case <-c.ctx.Done():
-			return
+			return false, fmt.Errorf("连接循环已停止: %w", c.ctx.Err())
 		default:
-			if !c.isConnected() {
-				if err := c.connect(); err != nil {
-					c.log.WithError(err).Error("连接失败，等待重试")
-					time.Sleep(c.reconnectDelay)
-					continue
-				}
+			if retryCount >= maxRetryCount {
+				c.log.Error("超过最大重试次数，停止连接尝试")
+				return false, fmt.Errorf("超过最大重试次数，停止连接尝试")
+			}
+
+			if c.isConnected() {
+				return true, nil
+			}
+
+			retryCount++
+
+			if err := c.connect(); err != nil {
+				c.log.WithError(err).Error("连接失败，等待重试")
+				time.Sleep(c.reconnectDelay)
+				continue
 			}
 
 			// 检查连接状态
 			time.Sleep(time.Second)
+
+			if c.isConnected() {
+				return true, nil
+			}
 		}
 	}
 }
@@ -159,7 +175,7 @@ func (c *Client) connect() error {
 	c.log.Info("正在建立WebSocket连接")
 
 	// 构建WebSocket URL
-	wsURL, err := c.buildWebSocketURL()
+	wsURL, err := c.buildWebSocketURL(c.agentID)
 	if err != nil {
 		return fmt.Errorf("构建WebSocket URL失败: %w", err)
 	}
@@ -173,13 +189,23 @@ func (c *Client) connect() error {
 	// 设置请求头
 	headers := make(map[string][]string)
 	headers["Server-ID"] = []string{c.agentID}
-	headers["Server-Token"] = []string{c.token}
+	headers["Agent-Token"] = []string{c.token}
 	headers["User-Agent"] = []string{"nspass-agent/1.0"}
 
 	// 建立连接
-	conn, _, err := dialer.Dial(wsURL, headers)
+	conn, response, err := dialer.Dial(wsURL, headers)
 	if err != nil {
 		return fmt.Errorf("建立WebSocket连接失败: %w", err)
+	}
+
+	defer response.Body.Close()
+
+	if response.StatusCode == 401 {
+		return fmt.Errorf("认证失败，状态码: %d", response.StatusCode)
+	}
+
+	if response.StatusCode != 101 {
+		return fmt.Errorf("WebSocket连接失败,状态码: %d", response.StatusCode)
 	}
 
 	c.connMu.Lock()
@@ -189,18 +215,18 @@ func (c *Client) connect() error {
 
 	c.log.Info("WebSocket连接建立成功")
 
-	// 启动读取消息的协程
-	c.wg.Add(1)
-	go c.readMessageLoop()
-
 	return nil
 }
 
 // buildWebSocketURL 构建WebSocket URL
-func (c *Client) buildWebSocketURL() (string, error) {
+func (c *Client) buildWebSocketURL(agentID string) (string, error) {
 	u, err := url.Parse(c.config.API.BaseURL)
 	if err != nil {
 		return "", fmt.Errorf("解析API基础URL失败: %w", err)
+	}
+
+	if agentID == "" {
+		return "", fmt.Errorf("agentID不能为空")
 	}
 
 	// 转换为WebSocket协议
@@ -211,12 +237,7 @@ func (c *Client) buildWebSocketURL() (string, error) {
 	}
 
 	// 添加WebSocket路径
-	u.Path = "/api/v1/agent/websocket"
-
-	// 添加查询参数
-	query := u.Query()
-	query.Set("agent_id", c.agentID)
-	u.RawQuery = query.Encode()
+	u.Path = fmt.Sprintf("/v1/agent/%s/websocket", agentID)
 
 	return u.String(), nil
 }
@@ -295,22 +316,33 @@ func (c *Client) messageProcessLoop() {
 // processMessage 处理WebSocket消息
 func (c *Client) processMessage(message *model.WebSocketMessage) {
 	c.log.WithFields(logrus.Fields{
-		"message_id":   message.Id,
-		"message_type": message.Type.String(),
+		"message_id":   message.MessageId,
+		"message_type": message.MessageType.String(),
 	}).Debug("处理WebSocket消息")
 
-	switch message.Type {
-	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_TASK:
+	switch message.MessageType {
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_TASK:
 		c.handleTaskMessage(message)
-	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_HEARTBEAT:
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_HEARTBEAT:
 		c.handleHeartbeatMessage(message)
-	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_ACK:
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_ACK:
 		c.handleAckMessage(message)
-	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_ERROR:
-		c.handleErrorMessage(message)
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_EGRESS_CONFIG:
+		c.handleEgressConfig(message)
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_IPTABLES_CONFIG:
+		c.handleIptablesConfig(message)
 	default:
-		c.log.WithField("message_type", message.Type.String()).Warn("未知的消息类型")
+		c.log.WithField("message_type", message.MessageType.String()).Warn("未知的消息类型")
 	}
+}
+
+func (c *Client) handleEgressConfig(message *model.WebSocketMessage) {
+	// 这里可以添加具体的处理逻辑，比如重新加载配置或发送错误消息
+
+}
+
+func (c *Client) handleIptablesConfig(message *model.WebSocketMessage) {
+	// 这里可以添加具体的处理逻辑，比如重新加载iptables规则或发送错误消息
 }
 
 // handleTaskMessage 处理任务消息
@@ -324,7 +356,7 @@ func (c *Client) handleTaskMessage(message *model.WebSocketMessage) {
 	var taskMessage model.TaskMessage
 	if err := message.Payload.UnmarshalTo(&taskMessage); err != nil {
 		c.log.WithError(err).Error("解析任务消息失败")
-		c.sendErrorAck(message.Id, "解析任务消息失败", err.Error())
+		c.sendErrorAck(message.MessageId, "解析任务消息失败", err.Error())
 		return
 	}
 
@@ -341,7 +373,7 @@ func (c *Client) handleTaskMessage(message *model.WebSocketMessage) {
 		if existingResult != nil {
 			// Task already completed, send immediate ACK with existing result
 			c.log.WithField("task_id", taskMessage.TaskId).Info("任务已完成，发送缓存结果")
-			c.sendTaskResultAck(message.Id, existingResult)
+			c.sendTaskResultAck(message.MessageId, existingResult)
 			return
 		} else {
 			// Task is running or cancelled, send appropriate ACK
@@ -351,13 +383,13 @@ func (c *Client) handleTaskMessage(message *model.WebSocketMessage) {
 				Status: model.TaskStatus_TASK_STATUS_RUNNING,
 				Output: "Task is currently running or was cancelled",
 			}
-			c.sendTaskResultAck(message.Id, runningResult)
+			c.sendTaskResultAck(message.MessageId, runningResult)
 			return
 		}
 	}
 
 	// Task should be executed, process it asynchronously
-	go c.executeTask(message.Id, &taskMessage)
+	go c.executeTask(message.MessageId, &taskMessage)
 }
 
 // executeTask 执行任务
@@ -445,8 +477,8 @@ func (c *Client) sendAckMessage(ackMessage *model.AckMessage) {
 	}
 
 	wsMessage := &model.WebSocketMessage{
-		Id:            c.generateMessageID(),
-		Type:          model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_ACK,
+		MessageId:     c.generateMessageID(),
+		MessageType:   model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_ACK,
 		Timestamp:     timestamppb.Now(),
 		Payload:       payload,
 		CorrelationId: ackMessage.MessageId,
@@ -461,7 +493,7 @@ func (c *Client) handleHeartbeatMessage(message *model.WebSocketMessage) {
 	c.lastHeartbeat = time.Now()
 
 	// 发送心跳确认
-	c.sendHeartbeatAck(message.Id)
+	c.sendHeartbeatAck(message.MessageId)
 }
 
 // sendHeartbeatAck 发送心跳确认
@@ -534,10 +566,10 @@ func (c *Client) sendHeartbeat() {
 	}
 
 	wsMessage := &model.WebSocketMessage{
-		Id:        c.generateMessageID(),
-		Type:      model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_HEARTBEAT,
-		Timestamp: timestamppb.Now(),
-		Payload:   payload,
+		MessageId:   c.generateMessageID(),
+		MessageType: model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_HEARTBEAT,
+		Timestamp:   timestamppb.Now(),
+		Payload:     payload,
 	}
 
 	c.sendMessage(wsMessage)
@@ -664,10 +696,10 @@ func (c *Client) sendMetrics(metricsType model.MetricsType, data proto.Message) 
 	}
 
 	wsMessage := &model.WebSocketMessage{
-		Id:        c.generateMessageID(),
-		Type:      model.WebSocketMessageType_WEBSOCKET_MESSAGE_TYPE_METRICS,
-		Timestamp: timestamppb.Now(),
-		Payload:   payload,
+		MessageId:   c.generateMessageID(),
+		MessageType: model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_METRICS,
+		Timestamp:   timestamppb.Now(),
+		Payload:     payload,
 	}
 
 	c.sendMessage(wsMessage)
@@ -700,8 +732,8 @@ func (c *Client) sendMessage(message *model.WebSocketMessage) {
 	}
 
 	c.log.WithFields(logrus.Fields{
-		"message_id":   message.Id,
-		"message_type": message.Type.String(),
+		"message_id":   message.MessageId,
+		"message_type": message.MessageType.String(),
 		"message_size": len(messageData),
 	}).Debug("发送WebSocket Protocol Buffer消息成功")
 }
@@ -728,7 +760,7 @@ func (c *Client) isConnected() bool {
 
 // generateMessageID 生成消息ID
 func (c *Client) generateMessageID() string {
-	return fmt.Sprintf("msg_%d_%s", time.Now().UnixNano(), c.agentID)
+	return fmt.Sprintf("msg_agent_%d_%s", time.Now().UnixNano(), c.agentID)
 }
 
 // SetTaskStatsProvider sets the task stats provider for metrics collection

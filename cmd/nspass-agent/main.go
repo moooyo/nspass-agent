@@ -28,7 +28,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:     "nspass-agent",
 		Short:   "NSPass代理服务管理Agent",
-		Long:    "NSPass代理服务管理Agent，负责管理各种代理软件和网络配置",
+		Long:    "NSPass代理服务管理Agent,负责管理各种代理软件和网络配置",
 		Version: getVersionInfo(),
 		Run:     runAgent,
 	}
