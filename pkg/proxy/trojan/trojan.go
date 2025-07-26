@@ -11,24 +11,32 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultConfigPath 默认代理配置文件路径
+	DefaultConfigPath = "/etc/nspass-agent"
+	// DefaultBinPath 默认代理软件安装路径
+	DefaultBinPath = "/usr/local/bin"
+	// TrojanBinPath Trojan二进制文件路径
+	TrojanBinPath = DefaultBinPath + "/trojan"
+)
+
 // Trojan trojan代理实现
 type Trojan struct {
-	config     config.ProxyConfig
+	egressItem *model.EgressItem // 出口配置
 	configPath string
 	pidFile    string
 }
 
 // New 创建新的Trojan实例
-func New(cfg *model.EgressItem) *Trojan {
+func New(egressItem *model.EgressItem) *Trojan {
 	t := &Trojan{
-		config:     cfg,
-		configPath: filepath.Join(cfg.ConfigPath, "trojan.json"),
-		pidFile:    filepath.Join(cfg.ConfigPath, "trojan.pid"),
+		egressItem: egressItem,
+		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.json", egressItem.EgressId)),
+		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.pid", egressItem.EgressId)),
 	}
 
 	logger.LogStartup("trojan-proxy", "1.0", map[string]interface{}{
@@ -58,7 +66,7 @@ func (t *Trojan) Install() error {
 	log.Info("开始安装trojan")
 
 	// 创建安装目录
-	installDir := filepath.Join(t.config.BinPath, "trojan")
+	installDir := filepath.Join(DefaultBinPath, "trojan")
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		logger.LogError(err, "创建安装目录失败", logrus.Fields{
 			"install_dir": installDir,
@@ -110,8 +118,7 @@ func (t *Trojan) Uninstall() error {
 	}
 
 	// 删除二进制文件
-	binPath := filepath.Join(t.config.BinPath, "trojan")
-	if err := os.Remove(binPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(TrojanBinPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("删除trojan二进制文件失败: %w", err)
 	}
 
@@ -146,14 +153,23 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 		}
 	}
 
+	// 从EgressItem中解析配置
+	egressConfig := make(map[string]interface{})
+	if cfg.EgressConfig != "" {
+		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
+			log.WithError(err).Error("解析出口配置失败")
+			return fmt.Errorf("解析出口配置失败: %w", err)
+		}
+	}
+
 	// 生成trojan配置
 	config := map[string]interface{}{
 		"run_type":    "client",
 		"local_addr":  "127.0.0.1",
 		"local_port":  1080,
-		"remote_addr": cfg["server"],
-		"remote_port": cfg["port"],
-		"password":    []string{cfg["password"].(string)},
+		"remote_addr": egressConfig["server"],
+		"remote_port": egressConfig["port"],
+		"password":    []string{egressConfig["password"].(string)},
 		"log_level":   1,
 		"ssl": map[string]interface{}{
 			"verify":          true,
@@ -161,7 +177,7 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 			"cert":            "",
 			"cipher":          "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384",
 			"cipher_tls13":    "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
-			"sni":             cfg["sni"],
+			"sni":             egressConfig["sni"],
 		},
 		"tcp": map[string]interface{}{
 			"no_delay":       true,
@@ -173,11 +189,11 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 	}
 
 	// 如果有自定义本地端口
-	if localPort, ok := cfg["local_port"]; ok {
+	if localPort, ok := egressConfig["local_port"]; ok {
 		config["local_port"] = localPort
 	}
 
-	if localAddr, ok := cfg["local_addr"]; ok {
+	if localAddr, ok := egressConfig["local_addr"]; ok {
 		config["local_addr"] = localAddr
 	}
 

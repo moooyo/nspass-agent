@@ -10,24 +10,30 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultConfigPath 默认代理配置文件路径
+	DefaultConfigPath = "/etc/nspass-agent"
+	// DefaultBinPath 默认代理软件安装路径
+	DefaultBinPath = "/usr/local/bin"
+)
+
 // Shadowsocks shadowsocks代理实现
 type Shadowsocks struct {
-	config     config.ProxyConfig
+	egressItem *model.EgressItem // 出口配置
 	configPath string
 	pidFile    string
 }
 
 // New 创建新的Shadowsocks实例
-func New(cfg *model.EgressItem) *Shadowsocks {
+func New(egressItem *model.EgressItem) *Shadowsocks {
 	ss := &Shadowsocks{
-		config:     cfg,
-		configPath: filepath.Join(cfg.ConfigPath, "shadowsocks.json"),
-		pidFile:    filepath.Join(cfg.ConfigPath, "shadowsocks.pid"),
+		egressItem: egressItem,
+		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("shadowsocks-%s.json", egressItem.EgressId)),
+		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("shadowsocks-%s.pid", egressItem.EgressId)),
 	}
 
 	logger.LogStartup("shadowsocks-proxy", "1.0", map[string]interface{}{
@@ -152,24 +158,33 @@ func (s *Shadowsocks) Configure(cfg *model.EgressItem) error {
 		return fmt.Errorf("创建配置目录失败: %w", err)
 	}
 
+	// 从EgressItem中解析配置
+	egressConfig := make(map[string]interface{})
+	if cfg.EgressConfig != "" {
+		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
+			log.WithError(err).Error("解析出口配置失败")
+			return fmt.Errorf("解析出口配置失败: %w", err)
+		}
+	}
+
 	// 生成shadowsocks配置
 	config := map[string]interface{}{
-		"server":      cfg["server"],
-		"server_port": cfg["port"],
-		"password":    cfg["password"],
-		"method":      cfg["method"],
-		"timeout":     cfg["timeout"],
+		"server":      egressConfig["server"],
+		"server_port": cfg.Port,     // 使用protobuf字段
+		"password":    cfg.Password, // 使用protobuf字段
+		"method":      egressConfig["method"],
+		"timeout":     egressConfig["timeout"],
 		"fast_open":   true,
 	}
 
 	// 如果有本地配置
-	if localPort, ok := cfg["local_port"]; ok {
+	if localPort, ok := egressConfig["local_port"]; ok {
 		config["local_port"] = localPort
 	} else {
 		config["local_port"] = 1080
 	}
 
-	if localAddr, ok := cfg["local_address"]; ok {
+	if localAddr, ok := egressConfig["local_address"]; ok {
 		config["local_address"] = localAddr
 	} else {
 		config["local_address"] = "0.0.0.0"

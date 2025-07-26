@@ -1,6 +1,7 @@
 package snell
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,19 +16,28 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// DefaultConfigPath 默认代理配置文件路径
+	DefaultConfigPath = "/etc/nspass-agent"
+	// DefaultBinPath 默认代理软件安装路径
+	DefaultBinPath = "/usr/local/bin"
+	// SnellServerBinPath Snell服务器二进制文件路径
+	SnellServerBinPath = DefaultBinPath + "/snell-server"
+)
+
 // Snell snell代理实现
 type Snell struct {
-	config     *model.EgressItem
+	egressItem *model.EgressItem // 出口配置
 	configPath string
 	pidFile    string
 }
 
 // New 创建新的Snell实例
-func New(cfg *model.EgressItem) *Snell {
+func New(egressItem *model.EgressItem) *Snell {
 	s := &Snell{
-		config:     cfg,
-		configPath: filepath.Join(cfg.ConfigPath, "snell.conf"),
-		pidFile:    filepath.Join(cfg.ConfigPath, "snell.pid"),
+		egressItem: egressItem,
+		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%s.conf", egressItem.EgressId)),
+		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%s.pid", egressItem.EgressId)),
 	}
 
 	logger.LogStartup("snell-proxy", "1.0", map[string]interface{}{
@@ -57,7 +67,7 @@ func (s *Snell) Install() error {
 	log.Info("开始安装snell-server")
 
 	// 创建安装目录
-	installDir := filepath.Join(s.config.BinPath, "snell")
+	installDir := filepath.Join(DefaultBinPath, "snell")
 	if err := os.MkdirAll(installDir, 0755); err != nil {
 		logger.LogError(err, "创建安装目录失败", logrus.Fields{
 			"install_dir": installDir,
@@ -109,8 +119,7 @@ func (s *Snell) Uninstall() error {
 	}
 
 	// 删除二进制文件
-	binPath := filepath.Join(s.config.BinPath, "snell-server")
-	if err := os.Remove(binPath); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(SnellServerBinPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("删除snell-server二进制文件失败: %w", err)
 	}
 
@@ -145,19 +154,28 @@ func (s *Snell) Configure(cfg *model.EgressItem) error {
 		}
 	}
 
+	// 从EgressItem中解析配置
+	egressConfig := make(map[string]interface{})
+	if cfg.EgressConfig != "" {
+		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
+			log.WithError(err).Error("解析出口配置失败")
+			return fmt.Errorf("解析出口配置失败: %w", err)
+		}
+	}
+
 	// 生成snell配置
 	var configLines []string
 	configLines = append(configLines, "[snell-server]")
-	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%v", cfg["port"]))
-	configLines = append(configLines, fmt.Sprintf("psk = %s", cfg["psk"]))
+	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%v", egressConfig["port"]))
+	configLines = append(configLines, fmt.Sprintf("psk = %s", egressConfig["psk"]))
 	configLines = append(configLines, "ipv6 = false")
 
 	// 可选配置
-	if obfs, ok := cfg["obfs"]; ok {
+	if obfs, ok := egressConfig["obfs"]; ok {
 		configLines = append(configLines, fmt.Sprintf("obfs = %s", obfs))
 	}
 
-	if obfsHost, ok := cfg["obfs-host"]; ok {
+	if obfsHost, ok := egressConfig["obfs-host"]; ok {
 		configLines = append(configLines, fmt.Sprintf("obfs-host = %s", obfsHost))
 	}
 

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/api"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -125,7 +124,7 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 		}
 
 		// 转换proto配置为规则参数
-		table, chain, ruleText := api.ConvertProtoIptablesConfigToRuleParts(config)
+		table, chain, ruleText := m.convertProtoConfigToRuleParts(config)
 
 		rule := &Rule{
 			ID:      fmt.Sprintf("%d", config.Id),
@@ -628,6 +627,67 @@ type IPTablesTable struct {
 	Name   string
 	Chains map[string]*IPTablesChain
 	Rules  []string
+}
+
+// convertProtoConfigToRuleParts 将proto配置转换为iptables规则部分
+func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (table, chain, ruleText string) {
+	// 设置表名
+	table = config.TableName
+	if table == "" {
+		table = "filter" // 默认表
+	}
+
+	// 设置链名
+	chain = config.ChainName
+	if chain == "" {
+		chain = "INPUT" // 默认链
+	}
+
+	// 构建规则文本
+	var ruleParts []string
+
+	// 添加协议
+	if config.Protocol != "" && config.Protocol != "all" {
+		ruleParts = append(ruleParts, "-p", config.Protocol)
+	}
+
+	// 添加源IP
+	if config.SourceIp != nil && *config.SourceIp != "" {
+		ruleParts = append(ruleParts, "-s", *config.SourceIp)
+	}
+
+	// 添加目标IP
+	if config.DestIp != nil && *config.DestIp != "" {
+		ruleParts = append(ruleParts, "-d", *config.DestIp)
+	}
+
+	// 添加源端口
+	if config.SourcePort != nil && *config.SourcePort != "" {
+		ruleParts = append(ruleParts, "--sport", *config.SourcePort)
+	}
+
+	// 添加目标端口
+	if config.DestPort != nil && *config.DestPort != "" {
+		ruleParts = append(ruleParts, "--dport", *config.DestPort)
+	}
+
+	// 添加网络接口
+	if config.Interface != nil && *config.Interface != "" {
+		ruleParts = append(ruleParts, "-i", *config.Interface)
+	}
+
+	// 添加动作
+	if config.RuleAction != "" {
+		ruleParts = append(ruleParts, "-j", config.RuleAction)
+	}
+
+	// 添加注释（如果有）
+	if config.RuleComment != nil && *config.RuleComment != "" {
+		ruleParts = append(ruleParts, "-m", "comment", "--comment", *config.RuleComment)
+	}
+
+	ruleText = strings.Join(ruleParts, " ")
+	return table, chain, ruleText
 }
 
 // IPTablesChain 表示一个iptables链

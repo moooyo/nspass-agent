@@ -53,7 +53,7 @@ func (ps *ProxyState) SetStatus(status string) {
 
 		// 记录状态变更
 		logger.LogStateChange(
-			ps.Type,
+			ps.Type.String(),
 			oldStatus,
 			status,
 			"代理状态监控检测到变化",
@@ -281,7 +281,15 @@ func (pm *ProxyMonitor) Stop() error {
 func (pm *ProxyMonitor) GetStats() ProxyMonitorStats {
 	pm.stats.mu.RLock()
 	defer pm.stats.mu.RUnlock()
-	return pm.stats
+
+	// 返回统计信息的副本，不包含锁
+	return ProxyMonitorStats{
+		TotalChecks:     pm.stats.TotalChecks,
+		TotalRestarts:   pm.stats.TotalRestarts,
+		SuccessRestarts: pm.stats.SuccessRestarts,
+		FailedRestarts:  pm.stats.FailedRestarts,
+		LastCheckTime:   pm.stats.LastCheckTime,
+	}
 }
 
 // GetProxyState 获取指定代理的状态
@@ -507,7 +515,7 @@ func (pm *ProxyMonitor) attemptRestart(state *ProxyState, reason string) {
 }
 
 // performRestart 执行重启操作
-func (pm *ProxyMonitor) performRestart(instance ProxyInterface, config map[string]interface{}, log *logrus.Entry) bool {
+func (pm *ProxyMonitor) performRestart(instance ProxyInterface, config *model.EgressItem, log *logrus.Entry) bool {
 	// 1. 尝试停止进程（如果还在运行）
 	log.Debug("停止代理进程")
 	if err := instance.Stop(); err != nil {
