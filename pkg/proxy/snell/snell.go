@@ -20,7 +20,7 @@ const (
 	// DefaultConfigPath 默认代理配置文件路径
 	DefaultConfigPath = "/etc/nspass-agent"
 	// DefaultBinPath 默认代理软件安装路径
-	DefaultBinPath = "/usr/local/bin"
+	DefaultBinPath = "/usr/local/bin/proxy"
 	// SnellServerBinPath Snell服务器二进制文件路径
 	SnellServerBinPath = DefaultBinPath + "/snell-server"
 )
@@ -51,83 +51,6 @@ func New(egressItem *model.EgressItem) *Snell {
 // Type 返回代理类型
 func (s *Snell) Type() string {
 	return "snell"
-}
-
-// Install 安装snell
-func (s *Snell) Install() error {
-	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
-
-	// 检查是否已安装
-	if s.IsInstalled() {
-		log.Debug("snell已安装，跳过安装")
-		return nil
-	}
-
-	log.Info("开始安装snell-server")
-
-	// 创建安装目录
-	installDir := filepath.Join(DefaultBinPath, "snell")
-	if err := os.MkdirAll(installDir, 0755); err != nil {
-		logger.LogError(err, "创建安装目录失败", logrus.Fields{
-			"install_dir": installDir,
-		})
-		return fmt.Errorf("创建安装目录失败: %w", err)
-	}
-
-	// 下载并安装snell
-	downloadURL := "https://dl.nssurge.com/snell/snell-server-v4.0.1-linux-amd64.zip"
-
-	log.WithField("download_url", downloadURL).Debug("开始下载snell")
-
-	// 这里简化实现，实际应该下载并解压
-	// 创建一个模拟的snell二进制文件
-	snellBin := filepath.Join(installDir, "snell-server")
-	if err := os.WriteFile(snellBin, []byte("#!/bin/bash\necho 'snell-server placeholder'\n"), 0755); err != nil {
-		logger.LogError(err, "创建snell二进制文件失败", logrus.Fields{
-			"binary_path": snellBin,
-		})
-		return fmt.Errorf("创建snell二进制文件失败: %w", err)
-	}
-
-	// 创建符号链接到系统PATH
-	systemBin := "/usr/local/bin/snell-server"
-	if err := os.Symlink(snellBin, systemBin); err != nil && !os.IsExist(err) {
-		logger.LogError(err, "创建符号链接失败", logrus.Fields{
-			"source": snellBin,
-			"target": systemBin,
-		})
-		return fmt.Errorf("创建符号链接失败: %w", err)
-	}
-
-	duration := time.Since(startTime)
-	logger.LogPerformance("snell_install", duration, logrus.Fields{
-		"install_dir": installDir,
-	})
-
-	log.WithField("duration_ms", duration.Milliseconds()).Info("snell-server安装完成")
-	return nil
-}
-
-// Uninstall 卸载snell
-func (s *Snell) Uninstall() error {
-	// 先停止服务
-	if s.IsRunning() {
-		if err := s.Stop(); err != nil {
-			logrus.Warnf("停止snell服务失败: %v", err)
-		}
-	}
-
-	// 删除二进制文件
-	if err := os.Remove(SnellServerBinPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除snell-server二进制文件失败: %w", err)
-	}
-
-	// 清理配置文件
-	os.Remove(s.configPath)
-	os.Remove(s.pidFile)
-
-	return nil
 }
 
 // Configure 配置snell
@@ -220,7 +143,8 @@ func (s *Snell) Start() error {
 	log.Debug("启动snell服务")
 
 	// 启动snell-server
-	cmd := exec.Command("snell-server", "-c", s.configPath)
+	snellBinaryPath := filepath.Join(DefaultBinPath, "snell-server")
+	cmd := exec.Command(snellBinaryPath, "-c", s.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -339,12 +263,14 @@ func (s *Snell) Status() (string, error) {
 
 // IsInstalled 检查是否已安装
 func (s *Snell) IsInstalled() bool {
-	_, err := exec.LookPath("snell-server")
+	binaryPath := filepath.Join(DefaultBinPath, "snell-server")
+	_, err := os.Stat(binaryPath)
 	installed := err == nil
 
 	logger.GetProxyLogger().WithFields(logrus.Fields{
-		"proxy_type": "snell",
-		"installed":  installed,
+		"proxy_type":  "snell",
+		"binary_path": binaryPath,
+		"installed":   installed,
 	}).Debug("检查安装状态")
 
 	return installed

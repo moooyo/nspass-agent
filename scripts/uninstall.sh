@@ -258,21 +258,35 @@ cleanup_proxy_software() {
     echo ""
     print_step "检查代理软件..."
     
+    local proxy_bin_dir="/usr/local/bin/proxy"
     local found_proxies=""
     
-    # 检查shadowsocks
+    # 检查代理程序目录
+    if [ -d "$proxy_bin_dir" ]; then
+        if [ -f "$proxy_bin_dir/go-shadowsocks2" ]; then
+            found_proxies="$found_proxies go-shadowsocks2"
+        fi
+        
+        if [ -f "$proxy_bin_dir/snell-server" ]; then
+            found_proxies="$found_proxies snell-server"
+        fi
+        
+        if [ -f "$proxy_bin_dir/trojan-go" ]; then
+            found_proxies="$found_proxies trojan-go"
+        fi
+    fi
+    
+    # 检查系统路径中的旧版本代理软件
     if command -v ss-local >/dev/null 2>&1 || command -v ss-server >/dev/null 2>&1; then
-        found_proxies="$found_proxies shadowsocks"
+        found_proxies="$found_proxies shadowsocks(系统)"
     fi
     
-    # 检查trojan
     if [ -f /usr/local/bin/trojan ] || command -v trojan >/dev/null 2>&1; then
-        found_proxies="$found_proxies trojan"
+        found_proxies="$found_proxies trojan(系统)"
     fi
     
-    # 检查snell
-    if [ -f /usr/local/bin/snell-server ] || command -v snell-server >/dev/null 2>&1; then
-        found_proxies="$found_proxies snell"
+    if [ -f /usr/local/bin/snell-server ] && [ ! -f "$proxy_bin_dir/snell-server" ]; then
+        found_proxies="$found_proxies snell(系统)"
     fi
     
     if [ -z "$found_proxies" ]; then
@@ -285,14 +299,20 @@ cleanup_proxy_software() {
     echo ""
     
     while true; do
-        read -p "是否卸载这些代理软件？ [y/N]: " -n 1 -r
+        read -p "是否删除这些代理软件？ [y/N]: " -n 1 -r
         echo ""
         case $REPLY in
             [Yy])
                 print_info "清理代理软件..."
                 
-                # 清理shadowsocks
-                if echo "$found_proxies" | grep -q "shadowsocks"; then
+                # 清理代理程序目录
+                if [ -d "$proxy_bin_dir" ]; then
+                    print_info "删除代理程序目录: $proxy_bin_dir"
+                    rm -rf "$proxy_bin_dir"
+                fi
+                
+                # 清理系统路径中的旧版本
+                if echo "$found_proxies" | grep -q "shadowsocks(系统)"; then
                     if command -v apt-get >/dev/null 2>&1; then
                         apt-get remove -y shadowsocks-libev 2>/dev/null || true
                         print_info "shadowsocks (apt) 已卸载"
@@ -308,16 +328,16 @@ cleanup_proxy_software() {
                     fi
                 fi
                 
-                # 清理trojan
-                if echo "$found_proxies" | grep -q "trojan"; then
+                # 清理系统路径中的 trojan
+                if echo "$found_proxies" | grep -q "trojan(系统)"; then
                     rm -f /usr/local/bin/trojan 2>/dev/null || true
-                    print_info "trojan 已删除"
+                    print_info "trojan (系统) 已删除"
                 fi
                 
-                # 清理snell
-                if echo "$found_proxies" | grep -q "snell"; then
+                # 清理系统路径中的 snell
+                if echo "$found_proxies" | grep -q "snell(系统)"; then
                     rm -f /usr/local/bin/snell-server 2>/dev/null || true
-                    print_info "snell-server 已删除"
+                    print_info "snell-server (系统) 已删除"
                 fi
                 
                 break

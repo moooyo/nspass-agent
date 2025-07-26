@@ -17,7 +17,6 @@ import (
 
 // ProxyInterface 代理接口
 type ProxyInterface interface {
-	Install() error
 	Configure(config *model.EgressItem) error
 	Start() error
 	Stop() error
@@ -207,22 +206,10 @@ func (m *Manager) configureProxy(cfg *model.EgressItem) error {
 
 	// 检查是否已安装
 	if !proxy.IsInstalled() {
-		log.Info("代理软件未安装，开始安装")
-		installStart := time.Now()
-
-		if err := proxy.Install(); err != nil {
-			logger.LogError(err, "安装代理软件失败", logrus.Fields{
-				"proxy_type": cfg.EgressMode,
-			})
-			return fmt.Errorf("安装 %s 代理软件失败: %w", cfg.EgressMode, err)
-		}
-
-		installDuration := time.Since(installStart)
-		logger.LogPerformance("proxy_install", installDuration, logrus.Fields{
+		logger.LogError(fmt.Errorf("代理软件未安装"), "代理软件未安装", logrus.Fields{
 			"proxy_type": cfg.EgressMode,
 		})
-
-		log.WithField("duration_ms", installDuration.Milliseconds()).Info("代理软件安装完成")
+		return fmt.Errorf("%s 代理软件未安装，请检查安装脚本是否正确执行", cfg.EgressMode)
 	}
 
 	// 配置代理

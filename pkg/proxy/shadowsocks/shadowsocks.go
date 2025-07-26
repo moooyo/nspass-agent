@@ -18,7 +18,7 @@ const (
 	// DefaultConfigPath 默认代理配置文件路径
 	DefaultConfigPath = "/etc/nspass-agent"
 	// DefaultBinPath 默认代理软件安装路径
-	DefaultBinPath = "/usr/local/bin"
+	DefaultBinPath = "/usr/local/bin/proxy"
 )
 
 // Shadowsocks shadowsocks代理实现
@@ -49,99 +49,6 @@ func (s *Shadowsocks) Type() string {
 	return "shadowsocks"
 }
 
-// Install 安装shadowsocks
-func (s *Shadowsocks) Install() error {
-	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "shadowsocks")
-
-	// 检查是否已安装
-	if s.IsInstalled() {
-		log.Debug("shadowsocks已安装，跳过安装")
-		return nil
-	}
-
-	log.Info("开始安装shadowsocks-libev")
-
-	// 使用包管理器安装
-	var cmd *exec.Cmd
-	var pkgManager string
-
-	if _, err := exec.LookPath("apt-get"); err == nil {
-		// Debian/Ubuntu
-		pkgManager = "apt-get"
-		log.Debug("使用apt-get包管理器")
-		cmd = exec.Command("apt-get", "update")
-		if err := cmd.Run(); err != nil {
-			logger.LogError(err, "更新包列表失败", logrus.Fields{
-				"pkg_manager": pkgManager,
-			})
-			return fmt.Errorf("更新包列表失败: %w", err)
-		}
-		cmd = exec.Command("apt-get", "install", "-y", "shadowsocks-libev")
-	} else if _, err := exec.LookPath("yum"); err == nil {
-		// CentOS/RHEL
-		pkgManager = "yum"
-		log.Debug("使用yum包管理器")
-		cmd = exec.Command("yum", "install", "-y", "shadowsocks-libev")
-	} else if _, err := exec.LookPath("pacman"); err == nil {
-		// Arch Linux
-		pkgManager = "pacman"
-		log.Debug("使用pacman包管理器")
-		cmd = exec.Command("pacman", "-S", "--noconfirm", "shadowsocks-libev")
-	} else {
-		logger.LogError(fmt.Errorf("未找到支持的包管理器"),
-			"不支持的系统，无法自动安装shadowsocks", nil)
-		return fmt.Errorf("不支持的系统，无法自动安装shadowsocks")
-	}
-
-	if err := cmd.Run(); err != nil {
-		logger.LogError(err, "安装shadowsocks失败", logrus.Fields{
-			"pkg_manager": pkgManager,
-		})
-		return fmt.Errorf("安装shadowsocks失败: %w", err)
-	}
-
-	duration := time.Since(startTime)
-	logger.LogPerformance("shadowsocks_install", duration, logrus.Fields{
-		"pkg_manager": pkgManager,
-	})
-
-	log.WithField("duration_ms", duration.Milliseconds()).Info("shadowsocks-libev安装完成")
-	return nil
-}
-
-// Uninstall 卸载shadowsocks
-func (s *Shadowsocks) Uninstall() error {
-	// 先停止服务
-	if s.IsRunning() {
-		if err := s.Stop(); err != nil {
-			logrus.Warnf("停止shadowsocks服务失败: %v", err)
-		}
-	}
-
-	// 使用包管理器卸载
-	var cmd *exec.Cmd
-	if _, err := exec.LookPath("apt-get"); err == nil {
-		cmd = exec.Command("apt-get", "remove", "-y", "shadowsocks-libev")
-	} else if _, err := exec.LookPath("yum"); err == nil {
-		cmd = exec.Command("yum", "remove", "-y", "shadowsocks-libev")
-	} else if _, err := exec.LookPath("pacman"); err == nil {
-		cmd = exec.Command("pacman", "-R", "--noconfirm", "shadowsocks-libev")
-	}
-
-	if cmd != nil {
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("卸载shadowsocks失败: %w", err)
-		}
-	}
-
-	// 清理配置文件
-	os.Remove(s.configPath)
-	os.Remove(s.pidFile)
-
-	return nil
-}
-
 // Configure 配置shadowsocks
 func (s *Shadowsocks) Configure(cfg *model.EgressItem) error {
 	startTime := time.Now()
@@ -170,8 +77,8 @@ func (s *Shadowsocks) Configure(cfg *model.EgressItem) error {
 	// 生成shadowsocks配置
 	config := map[string]interface{}{
 		"server":      egressConfig["server"],
-		"server_port": cfg.Port,     // 使用protobuf字段
-		"password":    cfg.Password, // 使用protobuf字段
+		"server_port": *cfg.Port,     // 使用protobuf字段（指针解引用）
+		"password":    *cfg.Password, // 使用protobuf字段（指针解引用）
 		"method":      egressConfig["method"],
 		"timeout":     egressConfig["timeout"],
 		"fast_open":   true,
@@ -236,23 +143,76 @@ func (s *Shadowsocks) Start() error {
 
 	log.Debug("启动shadowsocks服务")
 
-	// 启动ss-local
-	cmd := exec.Command("ss-local", "-c", s.configPath, "-f", s.pidFile)
+	// 读取配置文件以构建命令行参数
+	configData, err := os.ReadFile(s.configPath)
+	if err != nil {
+		logger.LogError(err, "读取配置文件失败", logrus.Fields{
+			"config_path": s.configPath,
+		})
+		return fmt.Errorf("读取配置文件失败: %w", err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(configData, &config); err != nil {
+		logger.LogError(err, "解析配置文件失败", logrus.Fields{
+			"config_path": s.configPath,
+		})
+		return fmt.Errorf("解析配置文件失败: %w", err)
+	}
+
+	// 构建shadowsocks URL格式
+	// ss://method:password@server:port
+	server := config["server"].(string)
+	serverPort := fmt.Sprintf("%.0f", config["server_port"].(float64))
+	password := config["password"].(string)
+	method := config["method"].(string)
+	localAddr := config["local_address"].(string)
+	localPort := fmt.Sprintf("%.0f", config["local_port"].(float64))
+
+	shadowsocksURL := fmt.Sprintf("ss://%s:%s@%s:%s", method, password, server, serverPort)
+	socksAddr := fmt.Sprintf("%s:%s", localAddr, localPort)
+
+	// 启动go-shadowsocks2客户端
+	binaryPath := filepath.Join(DefaultBinPath, "go-shadowsocks2")
+	cmd := exec.Command(binaryPath, "-c", shadowsocksURL, "-socks", socksAddr)
+
+	// 设置环境变量以便后台运行
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
 	if err := cmd.Start(); err != nil {
 		logger.LogError(err, "启动shadowsocks失败", logrus.Fields{
-			"config_path": s.configPath,
-			"pid_file":    s.pidFile,
+			"binary_path":     binaryPath,
+			"shadowsocks_url": shadowsocksURL,
+			"socks_addr":      socksAddr,
 		})
 		return fmt.Errorf("启动shadowsocks失败: %w", err)
 	}
 
+	// 写入PID文件
+	if err := os.WriteFile(s.pidFile, []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0644); err != nil {
+		logger.LogError(err, "写入PID文件失败", logrus.Fields{
+			"pid_file": s.pidFile,
+			"pid":      cmd.Process.Pid,
+		})
+		// 不要因为PID文件写入失败而返回错误，服务已经启动了
+	}
+
 	duration := time.Since(startTime)
-	logger.LogPerformance("shadowsocks_start", duration, nil)
+	logger.LogPerformance("shadowsocks_start", duration, logrus.Fields{
+		"pid": cmd.Process.Pid,
+	})
 
 	// 记录状态变更
 	logger.LogStateChange("shadowsocks", "stopped", "running", "正常启动")
 
-	log.WithField("duration_ms", duration.Milliseconds()).Info("shadowsocks服务已启动")
+	log.WithFields(logrus.Fields{
+		"pid":         cmd.Process.Pid,
+		"socks_addr":  socksAddr,
+		"duration_ms": duration.Milliseconds(),
+	}).Info("shadowsocks服务已启动")
+
 	return nil
 }
 
@@ -313,8 +273,10 @@ func (s *Shadowsocks) Stop() error {
 
 // Restart 重启shadowsocks
 func (s *Shadowsocks) Restart() error {
+	log := logger.GetProxyLogger().WithField("proxy_type", "shadowsocks")
+
 	if err := s.Stop(); err != nil {
-		logrus.Warnf("停止shadowsocks失败: %v", err)
+		log.WithError(err).Warn("停止shadowsocks失败")
 	}
 
 	return s.Start()
@@ -340,12 +302,14 @@ func (s *Shadowsocks) Status() (string, error) {
 
 // IsInstalled 检查是否已安装
 func (s *Shadowsocks) IsInstalled() bool {
-	_, err := exec.LookPath("ss-local")
+	binaryPath := filepath.Join(DefaultBinPath, "go-shadowsocks2")
+	_, err := os.Stat(binaryPath)
 	installed := err == nil
 
 	logger.GetProxyLogger().WithFields(logrus.Fields{
-		"proxy_type": "shadowsocks",
-		"installed":  installed,
+		"proxy_type":  "shadowsocks",
+		"binary_path": binaryPath,
+		"installed":   installed,
 	}).Debug("检查安装状态")
 
 	return installed

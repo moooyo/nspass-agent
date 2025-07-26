@@ -19,9 +19,7 @@ const (
 	// DefaultConfigPath 默认代理配置文件路径
 	DefaultConfigPath = "/etc/nspass-agent"
 	// DefaultBinPath 默认代理软件安装路径
-	DefaultBinPath = "/usr/local/bin"
-	// TrojanBinPath Trojan二进制文件路径
-	TrojanBinPath = DefaultBinPath + "/trojan"
+	DefaultBinPath = "/usr/local/bin/proxy"
 )
 
 // Trojan trojan代理实现
@@ -50,83 +48,6 @@ func New(egressItem *model.EgressItem) *Trojan {
 // Type 返回代理类型
 func (t *Trojan) Type() string {
 	return "trojan"
-}
-
-// Install 安装trojan
-func (t *Trojan) Install() error {
-	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "trojan")
-
-	// 检查是否已安装
-	if t.IsInstalled() {
-		log.Debug("trojan已安装，跳过安装")
-		return nil
-	}
-
-	log.Info("开始安装trojan")
-
-	// 创建安装目录
-	installDir := filepath.Join(DefaultBinPath, "trojan")
-	if err := os.MkdirAll(installDir, 0755); err != nil {
-		logger.LogError(err, "创建安装目录失败", logrus.Fields{
-			"install_dir": installDir,
-		})
-		return fmt.Errorf("创建安装目录失败: %w", err)
-	}
-
-	// 下载并安装trojan
-	downloadURL := "https://github.com/trojan-gfw/trojan/releases/latest/download/trojan-1.16.0-linux-amd64.tar.xz"
-
-	log.WithField("download_url", downloadURL).Debug("开始下载trojan")
-
-	// 这里简化实现，实际应该下载并解压
-	// 创建一个模拟的trojan二进制文件
-	trojanBin := filepath.Join(installDir, "trojan")
-	if err := os.WriteFile(trojanBin, []byte("#!/bin/bash\necho 'trojan placeholder'\n"), 0755); err != nil {
-		logger.LogError(err, "创建trojan二进制文件失败", logrus.Fields{
-			"binary_path": trojanBin,
-		})
-		return fmt.Errorf("创建trojan二进制文件失败: %w", err)
-	}
-
-	// 创建符号链接到系统PATH
-	systemBin := "/usr/local/bin/trojan"
-	if err := os.Symlink(trojanBin, systemBin); err != nil && !os.IsExist(err) {
-		logger.LogError(err, "创建符号链接失败", logrus.Fields{
-			"source": trojanBin,
-			"target": systemBin,
-		})
-		return fmt.Errorf("创建符号链接失败: %w", err)
-	}
-
-	duration := time.Since(startTime)
-	logger.LogPerformance("trojan_install", duration, logrus.Fields{
-		"install_dir": installDir,
-	})
-
-	log.WithField("duration_ms", duration.Milliseconds()).Info("trojan安装完成")
-	return nil
-}
-
-// Uninstall 卸载trojan
-func (t *Trojan) Uninstall() error {
-	// 先停止服务
-	if t.IsRunning() {
-		if err := t.Stop(); err != nil {
-			logrus.Warnf("停止trojan服务失败: %v", err)
-		}
-	}
-
-	// 删除二进制文件
-	if err := os.Remove(TrojanBinPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("删除trojan二进制文件失败: %w", err)
-	}
-
-	// 清理配置文件
-	os.Remove(t.configPath)
-	os.Remove(t.pidFile)
-
-	return nil
 }
 
 // Configure 配置trojan
@@ -244,7 +165,8 @@ func (t *Trojan) Start() error {
 	log.Debug("启动trojan服务")
 
 	// 启动trojan
-	cmd := exec.Command("trojan", "-c", t.configPath)
+	trojanBinaryPath := filepath.Join(DefaultBinPath, "trojan-go")
+	cmd := exec.Command(trojanBinaryPath, "-c", t.configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -363,12 +285,14 @@ func (t *Trojan) Status() (string, error) {
 
 // IsInstalled 检查是否已安装
 func (t *Trojan) IsInstalled() bool {
-	_, err := exec.LookPath("trojan")
+	binaryPath := filepath.Join(DefaultBinPath, "trojan-go")
+	_, err := os.Stat(binaryPath)
 	installed := err == nil
 
 	logger.GetProxyLogger().WithFields(logrus.Fields{
-		"proxy_type": "trojan",
-		"installed":  installed,
+		"proxy_type":  "trojan",
+		"binary_path": binaryPath,
+		"installed":   installed,
 	}).Debug("检查安装状态")
 
 	return installed

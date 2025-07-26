@@ -444,7 +444,7 @@ check_update_needed() {
 install_dependencies() {
     print_step "检查并安装系统依赖..."
     
-    local deps="wget curl tar"
+    local deps="wget curl tar gzip unzip"
     local missing_deps=""
     
     # 检查依赖
@@ -758,6 +758,271 @@ download_and_install() {
     print_info "二进制文件安装完成"
 }
 
+# 安装代理程序
+install_proxy_binaries() {
+    print_step "安装代理程序..."
+    
+    # 创建代理程序安装目录
+    local proxy_bin_dir="/usr/local/bin/proxy"
+    mkdir -p "$proxy_bin_dir"
+    
+    # 检测系统架构
+    local os_arch
+    case "$(uname -m)" in
+        x86_64|amd64) os_arch="amd64" ;;
+        arm64|aarch64) os_arch="arm64" ;;
+        armv7l) os_arch="armv7" ;;
+        i386|i686) os_arch="386" ;;
+        *) 
+            print_warn "不支持的架构: $(uname -m)，跳过代理程序安装"
+            return 0
+            ;;
+    esac
+    
+    # 安装 go-shadowsocks2
+    install_go_shadowsocks2 "$proxy_bin_dir" "$os_arch"
+    
+    # 安装 snell-server
+    install_snell_server "$proxy_bin_dir" "$os_arch"
+    
+    # 安装 trojan-go
+    install_trojan_go "$proxy_bin_dir" "$os_arch"
+    
+    # 设置目录权限
+    chmod 755 "$proxy_bin_dir"
+    chown -R root:root "$proxy_bin_dir"
+    
+    print_info "代理程序安装完成"
+}
+
+# 安装 go-shadowsocks2
+install_go_shadowsocks2() {
+    local install_dir="$1"
+    local arch="$2"
+    
+    print_info "安装 go-shadowsocks2..."
+    
+    local download_url
+    case "$(uname -s)" in
+        Linux)
+            download_url="https://github.com/shadowsocks/go-shadowsocks2/releases/download/v0.1.5/shadowsocks2-linux.gz"
+            ;;
+        Darwin)
+            if [ "$arch" = "arm64" ]; then
+                download_url="https://github.com/shadowsocks/go-shadowsocks2/releases/download/v0.1.5/shadowsocks2-macos-arm64.gz"
+            else
+                download_url="https://github.com/shadowsocks/go-shadowsocks2/releases/download/v0.1.5/shadowsocks2-macos-amd64.gz"
+            fi
+            ;;
+        *)
+            print_warn "不支持的操作系统: $(uname -s)，跳过 go-shadowsocks2 安装"
+            return 0
+            ;;
+    esac
+    
+    local temp_file="/tmp/shadowsocks2.gz"
+    local target_file="$install_dir/go-shadowsocks2"
+    
+    # 检查是否已存在
+    if [ -f "$target_file" ]; then
+        print_info "go-shadowsocks2 已存在，跳过安装"
+        return 0
+    fi
+    
+    # 下载文件
+    if command -v curl >/dev/null 2>&1; then
+        curl -k -L -o "$temp_file" "$download_url" || {
+            print_error "下载 go-shadowsocks2 失败"
+            return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget --no-check-certificate -O "$temp_file" "$download_url" || {
+            print_error "下载 go-shadowsocks2 失败"
+            return 1
+        }
+    else
+        print_error "缺少 curl 或 wget，无法下载 go-shadowsocks2"
+        return 1
+    fi
+    
+    # 解压并安装
+    if command -v gzip >/dev/null 2>&1; then
+        gzip -d -c "$temp_file" > "$target_file" || {
+            print_error "解压 go-shadowsocks2 失败"
+            rm -f "$temp_file"
+            return 1
+        }
+    else
+        print_error "缺少 gzip，无法解压 go-shadowsocks2"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # 设置权限
+    chmod +x "$target_file"
+    rm -f "$temp_file"
+    
+    print_info "✓ go-shadowsocks2 安装完成"
+}
+
+# 安装 snell-server
+install_snell_server() {
+    local install_dir="$1"
+    local arch="$2"
+    
+    print_info "安装 snell-server..."
+    
+    # 根据架构确定下载链接
+    local download_url
+    case "$arch" in
+        amd64)
+            download_url="https://dl.nssurge.com/snell/snell-server-v4.1.1-linux-amd64.zip"
+            ;;
+        arm64)
+            download_url="https://dl.nssurge.com/snell/snell-server-v4.1.1-linux-aarch64.zip"
+            ;;
+        *)
+            print_warn "不支持的架构: $arch，跳过 snell-server 安装"
+            return 0
+            ;;
+    esac
+    
+    local temp_file="/tmp/snell-server.zip"
+    local target_file="$install_dir/snell-server"
+    
+    # 检查是否已存在
+    if [ -f "$target_file" ]; then
+        print_info "snell-server 已存在，跳过安装"
+        return 0
+    fi
+    
+    # 下载文件
+    if command -v curl >/dev/null 2>&1; then
+        curl -k -L -o "$temp_file" "$download_url" || {
+            print_error "下载 snell-server 失败"
+            return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget --no-check-certificate -O "$temp_file" "$download_url" || {
+            print_error "下载 snell-server 失败"
+            return 1
+        }
+    else
+        print_error "缺少 curl 或 wget，无法下载 snell-server"
+        return 1
+    fi
+    
+    # 解压并安装
+    if command -v unzip >/dev/null 2>&1; then
+        local temp_dir="/tmp/snell-extract"
+        mkdir -p "$temp_dir"
+        unzip -q "$temp_file" -d "$temp_dir" || {
+            print_error "解压 snell-server 失败"
+            rm -rf "$temp_file" "$temp_dir"
+            return 1
+        }
+        
+        # 查找 snell-server 二进制文件
+        local snell_binary=$(find "$temp_dir" -name "snell-server" -type f | head -1)
+        if [ -n "$snell_binary" ]; then
+            cp "$snell_binary" "$target_file"
+            chmod +x "$target_file"
+        else
+            print_error "未找到 snell-server 二进制文件"
+            rm -rf "$temp_file" "$temp_dir"
+            return 1
+        fi
+        
+        rm -rf "$temp_file" "$temp_dir"
+    else
+        print_error "缺少 unzip，无法解压 snell-server"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    print_info "✓ snell-server 安装完成"
+}
+
+# 安装 trojan-go
+install_trojan_go() {
+    local install_dir="$1"
+    local arch="$2"
+    
+    print_info "安装 trojan-go..."
+    
+    # 获取最新版本
+    local latest_version
+    if command -v curl >/dev/null 2>&1; then
+        latest_version=$(curl -k -s https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    elif command -v wget >/dev/null 2>&1; then
+        latest_version=$(wget --no-check-certificate -qO- https://api.github.com/repos/p4gefau1t/trojan-go/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/' | head -1)
+    fi
+    
+    # 如果获取版本失败，使用默认版本
+    if [ -z "$latest_version" ]; then
+        latest_version="v0.10.6"
+        print_warn "无法获取最新版本，使用默认版本: $latest_version"
+    fi
+    
+    # 根据架构确定下载链接
+    local download_url="https://github.com/p4gefau1t/trojan-go/releases/download/${latest_version}/trojan-go-linux-${arch}.zip"
+    
+    local temp_file="/tmp/trojan-go.zip"
+    local target_file="$install_dir/trojan-go"
+    
+    # 检查是否已存在
+    if [ -f "$target_file" ]; then
+        print_info "trojan-go 已存在，跳过安装"
+        return 0
+    fi
+    
+    # 下载文件
+    if command -v curl >/dev/null 2>&1; then
+        curl -k -L -o "$temp_file" "$download_url" || {
+            print_error "下载 trojan-go 失败"
+            return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget --no-check-certificate -O "$temp_file" "$download_url" || {
+            print_error "下载 trojan-go 失败"
+            return 1
+        }
+    else
+        print_error "缺少 curl 或 wget，无法下载 trojan-go"
+        return 1
+    fi
+    
+    # 解压并安装
+    if command -v unzip >/dev/null 2>&1; then
+        local temp_dir="/tmp/trojan-extract"
+        mkdir -p "$temp_dir"
+        unzip -q "$temp_file" -d "$temp_dir" || {
+            print_error "解压 trojan-go 失败"
+            rm -rf "$temp_file" "$temp_dir"
+            return 1
+        }
+        
+        # 查找 trojan-go 二进制文件
+        local trojan_binary=$(find "$temp_dir" -name "trojan-go" -type f | head -1)
+        if [ -n "$trojan_binary" ]; then
+            cp "$trojan_binary" "$target_file"
+            chmod +x "$target_file"
+        else
+            print_error "未找到 trojan-go 二进制文件"
+            rm -rf "$temp_file" "$temp_dir"
+            return 1
+        fi
+        
+        rm -rf "$temp_file" "$temp_dir"
+    else
+        print_error "缺少 unzip，无法解压 trojan-go"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    print_info "✓ trojan-go 安装完成"
+}
+
 # 创建配置目录和文件
 setup_config() {
     print_step "设置配置文件..."
@@ -803,7 +1068,7 @@ api:
 
 # 代理软件配置
 proxy:
-  bin_path: "/usr/local/bin"
+  bin_path: "/usr/local/bin/proxy"
   config_path: "/etc/nspass/proxy"
   enabled_types: ["shadowsocks", "trojan", "snell"]
   auto_start: true
@@ -1188,6 +1453,9 @@ main() {
     
     download_and_install
     debug_log "下载安装完成"
+    
+    install_proxy_binaries
+    debug_log "代理程序安装完成"
     
     setup_config
     debug_log "配置设置完成"
