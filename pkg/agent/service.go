@@ -11,22 +11,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nspass/nspass-agent/pkg/api"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/iptables"
 	"github.com/nspass/nspass-agent/pkg/logger"
 	"github.com/nspass/nspass-agent/pkg/proxy"
 	"github.com/nspass/nspass-agent/pkg/websocket"
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/sirupsen/logrus"
 )
 
 // Service Agent核心服务
 type Service struct {
 	config          *config.Config
-	apiClient       *api.Client
 	proxyManager    *proxy.Manager
 	iptablesManager iptables.ManagerInterface
 	wsClient        *websocket.Client
@@ -48,9 +42,6 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 		return nil, fmt.Errorf("server_id不能为空")
 	}
 
-	// 创建API客户端
-	apiClient := api.NewClient(cfg.API, serverID)
-
 	// 创建proxy管理器
 	proxyManager := proxy.NewManager(cfg.Proxy)
 
@@ -61,7 +52,6 @@ func NewService(cfg *config.Config, serverID string) (*Service, error) {
 
 	service := &Service{
 		config:          cfg,
-		apiClient:       apiClient,
 		proxyManager:    proxyManager,
 		iptablesManager: iptablesManager,
 		serverID:        serverID,
@@ -153,79 +143,6 @@ func (s *Service) Stop() error {
 	s.running = false
 
 	log.Info("Agent服务已停止")
-	return nil
-}
-
-// updateIPTablesRulesFromProto 使用proto配置更新iptables规则
-func (s *Service) updateIPTablesRulesFromProto() error {
-	log := logger.GetComponentLogger("agent-service")
-
-	// 从API获取proto格式的iptables配置
-	iptablesConfigs, err := s.apiClient.GetServerIptablesConfigsProto(s.serverID)
-	if err != nil {
-		log.WithError(err).Error("获取iptables配置失败")
-		return fmt.Errorf("获取iptables配置失败: %w", err)
-	}
-
-	log.WithField("configs_count", len(iptablesConfigs)).Info("获取到iptables配置(proto)")
-
-	// 直接使用proto配置
-	return s.iptablesManager.UpdateRulesFromProto(iptablesConfigs)
-}
-
-// reportStatus 上报状态
-func (s *Service) reportStatus() error {
-	log := logger.GetComponentLogger("agent-service")
-
-	// 获取网络地址
-	ipv4, ipv6, err := s.getNetworkAddresses()
-	if err != nil {
-		logger.LogError(err, "获取网络地址失败", nil)
-	}
-
-	// 收集系统资源信息
-	activity, err := s.collectActivityInfo()
-	if err != nil {
-		logger.LogError(err, "收集活动信息失败", nil)
-		// 创建一个基本的活动信息
-		activity = &api.AgentActivity{
-			ActiveConnections:  0,
-			TotalBytesSent:     0,
-			TotalBytesReceived: 0,
-			ProxyServices:      []api.ProxyServiceStatus{},
-			LastActivity:       time.Now(),
-			CPUUsage:           0,
-			MemoryUsage:        0,
-			DiskUsage:          0,
-		}
-	}
-
-	// 构建状态报告
-	statusReport := api.AgentStatusReport{
-		ServerID:    s.serverID,
-		IPv4Address: ipv4,
-		IPv6Address: ipv6,
-		Activity:    *activity,
-		ReportTime:  time.Now(),
-	}
-
-	// 发送状态报告
-	configUpdate, err := s.apiClient.ReportAgentStatus(statusReport)
-	if err != nil {
-		return fmt.Errorf("发送状态报告失败: %w", err)
-	}
-
-	// 检查是否有配置更新
-	if configUpdate != nil && configUpdate.HasUpdate {
-		log.WithFields(logrus.Fields{
-			"config_version": configUpdate.ConfigVersion,
-			"update_message": configUpdate.UpdateMessage,
-		}).Info("检测到服务器配置更新，将在下次循环中获取新配置")
-
-		// 清除配置hash以强制在下次循环中更新
-		s.lastConfigHash = ""
-	}
-
 	return nil
 }
 
@@ -356,83 +273,6 @@ func (s *Service) getNetworkAddresses() (ipv4, ipv6 string, err error) {
 	}
 
 	return ipv4, ipv6, nil
-}
-
-// collectActivityInfo 收集活动信息
-func (s *Service) collectActivityInfo() (*api.AgentActivity, error) {
-	// 获取系统资源信息
-	cpuPercent, err := cpu.Percent(time.Second, false)
-	if err != nil {
-		logger.LogError(err, "获取CPU使用率失败", nil)
-		cpuPercent = []float64{0}
-	}
-
-	memInfo, err := mem.VirtualMemory()
-	if err != nil {
-		logger.LogError(err, "获取内存使用率失败", nil)
-		memInfo = &mem.VirtualMemoryStat{UsedPercent: 0}
-	}
-
-	diskInfo, err := disk.Usage("/")
-	if err != nil {
-		logger.LogError(err, "获取磁盘使用率失败", nil)
-		diskInfo = &disk.UsageStat{UsedPercent: 0}
-	}
-
-	// 获取proxy服务状态
-	proxyStatuses := s.collectProxyStatuses()
-
-	activity := &api.AgentActivity{
-		ActiveConnections:  int32(len(proxyStatuses)), // 简化的连接数统计
-		TotalBytesSent:     0,                         // 流量统计功能待实现
-		TotalBytesReceived: 0,                         // 流量统计功能待实现
-		ProxyServices:      proxyStatuses,
-		LastActivity:       time.Now(),
-		CPUUsage:           float32(cpuPercent[0]),
-		MemoryUsage:        float32(memInfo.UsedPercent),
-		DiskUsage:          float32(diskInfo.UsedPercent),
-	}
-
-	return activity, nil
-}
-
-// collectProxyStatuses 收集proxy服务状态
-func (s *Service) collectProxyStatuses() []api.ProxyServiceStatus {
-	var statuses []api.ProxyServiceStatus
-
-	proxyStatus := s.proxyManager.GetStatus()
-	if statusMap, ok := proxyStatus["statuses"].(map[string]interface{}); ok {
-		for proxyID, status := range statusMap {
-			serviceStatus := api.ProxyServiceStatus{
-				ServiceName:     proxyID,
-				ServiceStatus:   fmt.Sprintf("%v", status),
-				Port:            8080, // 使用默认端口，实际应从配置获取
-				ConnectionCount: 0,    // 连接数统计功能待实现
-				LastCheck:       time.Now(),
-			}
-
-			if status != "running" {
-				serviceStatus.ErrorMessage = fmt.Sprintf("服务状态: %v", status)
-			}
-
-			statuses = append(statuses, serviceStatus)
-		}
-	}
-
-	return statuses
-}
-
-// calculateConfigHash 计算配置哈希值
-func (s *Service) calculateConfigHash(config *api.ServerConfigData) string {
-	// 简化的哈希计算 - 实际应用中可以使用更复杂的哈希算法
-	hash := fmt.Sprintf("%s_%d_%d_%d_%v",
-		config.ServerID,
-		len(config.Routes),
-		len(config.Egress),
-		len(config.ForwardRules),
-		config.LastUpdated.Unix(),
-	)
-	return hash
 }
 
 // IsRunning 检查服务是否在运行
