@@ -961,6 +961,7 @@ func (c *Client) SetTaskStatsProvider() {
 // ipInfoReportLoop IP信息上报循环
 func (c *Client) ipInfoReportLoop() {
 	defer c.wg.Done()
+	c.log.Info("启动IP信息上报循环")
 
 	// 启动后立即发送一次IP信息
 	if c.isConnected() {
