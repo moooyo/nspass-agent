@@ -4,7 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -127,6 +131,10 @@ func (c *Client) Start() error {
 	// 启动监控数据上报协程
 	c.wg.Add(1)
 	go c.metricsReportLoop()
+
+	// 启动IP信息上报协程
+	c.wg.Add(1)
+	go c.ipInfoReportLoop()
 
 	// 触发初始连接
 	c.triggerReconnect()
@@ -948,4 +956,209 @@ func (c *Client) SetTaskStatsProvider() {
 		collector.SetTaskStatsProvider(c.taskHandler)
 		c.log.Info("Task stats provider set for metrics collection")
 	}
+}
+
+// ipInfoReportLoop IP信息上报循环
+func (c *Client) ipInfoReportLoop() {
+	defer c.wg.Done()
+
+	// 启动后立即发送一次IP信息
+	if c.isConnected() {
+		c.reportIPInfo()
+	}
+
+	ticker := time.NewTicker(10 * time.Minute) // 每10分钟上报一次IP信息
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			if c.isConnected() {
+				c.reportIPInfo()
+			}
+		}
+	}
+}
+
+// reportIPInfo 上报IP信息
+func (c *Client) reportIPInfo() {
+	c.log.Debug("开始收集和上报IP信息")
+
+	ipInfo := &model.IpInfo{}
+
+	// 获取IPv4地址（使用cip.cc）
+	if ipv4 := c.getPublicIPv4(); ipv4 != "" {
+		ipInfo.Ipv4Address = ipv4
+		c.log.WithField("ipv4", ipv4).Debug("获取到IPv4地址")
+	} else {
+		c.log.Warn("无法获取IPv4地址")
+	}
+
+	// 获取本机所有非内网和非本地链路的IPv6地址
+	if ipv6Addresses := c.getPublicIPv6Addresses(); len(ipv6Addresses) > 0 {
+		ipInfo.Ipv6Address = ipv6Addresses
+		c.log.WithField("ipv6_count", len(ipv6Addresses)).Debug("获取到IPv6地址")
+	} else {
+		c.log.Debug("没有找到公网IPv6地址")
+	}
+
+	// 发送IP信息消息
+	c.sendIPInfo(ipInfo)
+}
+
+// getPublicIPv4 使用cip.cc获取公网IPv4地址
+func (c *Client) getPublicIPv4() string {
+	client := &http.Client{
+		Timeout: 10 * time.Second, // 设置10秒超时
+	}
+
+	resp, err := client.Get("http://cip.cc")
+	if err != nil {
+		c.log.WithError(err).Error("请求cip.cc失败")
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		c.log.WithField("status_code", resp.StatusCode).Error("cip.cc响应状态码异常")
+		return ""
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.log.WithError(err).Error("读取cip.cc响应失败")
+		return ""
+	}
+
+	// 解析响应，提取IP地址行
+	lines := strings.Split(string(body), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "IP") && strings.Contains(line, ":") {
+			// 格式类似："IP	: 1.2.3.4"
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				ip := strings.TrimSpace(parts[1])
+				// 验证是否为有效的IPv4地址
+				if net.ParseIP(ip) != nil && strings.Contains(ip, ".") {
+					return ip
+				}
+			}
+		}
+	}
+
+	c.log.Warn("无法从cip.cc响应中解析IPv4地址")
+	return ""
+}
+
+// getPublicIPv6Addresses 获取本机所有非内网和非本地链路的IPv6地址
+func (c *Client) getPublicIPv6Addresses() []string {
+	var publicIPv6s []string
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		c.log.WithError(err).Error("获取网络接口失败")
+		return publicIPv6s
+	}
+
+	for _, iface := range interfaces {
+		// 跳过停用的接口
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			c.log.WithError(err).WithField("interface", iface.Name).Warn("获取接口地址失败")
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			default:
+				continue
+			}
+
+			// 只处理IPv6地址
+			if ip.To4() != nil {
+				continue
+			}
+
+			// 跳过loopback地址
+			if ip.IsLoopback() {
+				continue
+			}
+
+			// 跳过本地链路地址 (fe80::/10)
+			if ip.IsLinkLocalUnicast() {
+				continue
+			}
+
+			// 跳过内网地址
+			if c.isPrivateIPv6(ip) {
+				continue
+			}
+
+			// 跳过组播地址
+			if ip.IsMulticast() {
+				continue
+			}
+
+			publicIPv6s = append(publicIPv6s, ip.String())
+		}
+	}
+
+	return publicIPv6s
+}
+
+// isPrivateIPv6 检查IPv6地址是否为内网地址
+func (c *Client) isPrivateIPv6(ip net.IP) bool {
+	// IPv6内网地址范围：
+	// fc00::/7 (Unique Local Addresses)
+	// fec0::/10 (Site-local addresses - deprecated)
+
+	if len(ip) != 16 {
+		return false
+	}
+
+	// 检查 fc00::/7 范围 (fc00:0000:0000:0000:0000:0000:0000:0000 到 fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff)
+	if ip[0] >= 0xfc && ip[0] <= 0xfd {
+		return true
+	}
+
+	// 检查 fec0::/10 范围 (deprecated site-local)
+	if ip[0] == 0xfe && (ip[1]&0xc0) == 0xc0 {
+		return true
+	}
+
+	return false
+}
+
+// sendIPInfo 发送IP信息消息
+func (c *Client) sendIPInfo(ipInfo *model.IpInfo) {
+	payload, err := anypb.New(ipInfo)
+	if err != nil {
+		c.log.WithError(err).Error("创建IP信息消息载荷失败")
+		return
+	}
+
+	wsMessage := &model.WebSocketMessage{
+		MessageId:   c.generateMessageID(),
+		MessageType: model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_IPINFO,
+		Timestamp:   timestamppb.Now(),
+		Payload:     payload,
+	}
+
+	c.sendMessage(wsMessage)
+	c.log.WithFields(logrus.Fields{
+		"ipv4":       ipInfo.Ipv4Address,
+		"ipv6_count": len(ipInfo.Ipv6Address),
+	}).Info("发送IP信息消息")
 }
