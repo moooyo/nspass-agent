@@ -963,6 +963,9 @@ func (c *Client) ipInfoReportLoop() {
 	defer c.wg.Done()
 	c.log.Info("启动IP信息上报循环")
 
+	// wait 1 minute before starting the first report
+	time.Sleep(1 * time.Minute)
+
 	// 启动后立即发送一次IP信息
 	if c.isConnected() {
 		c.reportIPInfo()
