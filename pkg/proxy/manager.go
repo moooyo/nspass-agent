@@ -69,7 +69,7 @@ func (m *Manager) getProxyInstance(config *model.EgressItem) (ProxyInterface, er
 
 	// 检查类型是否支持
 	supported := false
-	if config.EgressMode == model.EgressMode_EGRESS_MODE_SS2022 {
+	if config.EgressMode == model.EgressMode_EGRESS_MODE_SS2022 || config.EgressMode == model.EgressMode_EGRESS_MODE_SNELL {
 		supported = true
 	}
 
