@@ -17,6 +17,7 @@ type Config struct {
 	IPTables       IPTablesConfig  `yaml:"iptables" json:"iptables"`
 	Logger         logger.Config   `yaml:"logger" json:"logger"`
 	WebSocket      WebSocketConfig `yaml:"websocket" json:"websocket"`             // WebSocket配置
+	Upgrade        UpgradeConfig   `yaml:"upgrade" json:"upgrade"`                 // 升级配置
 	UpdateInterval int             `yaml:"update_interval" json:"update_interval"` // 秒
 	LogLevel       string          `yaml:"log_level" json:"log_level"`
 }
@@ -69,6 +70,16 @@ type WebSocketConfig struct {
 	MetricsInterval      string `yaml:"metrics_interval" json:"metrics_interval"`             // 监控数据上报间隔
 	ReconnectInterval    string `yaml:"reconnect_interval" json:"reconnect_interval"`         // 重连间隔
 	MaxReconnectAttempts int    `yaml:"max_reconnect_attempts" json:"max_reconnect_attempts"` // 最大重连次数（0表示无限）
+}
+
+// UpgradeConfig 升级配置
+type UpgradeConfig struct {
+	Enabled        bool   `yaml:"enabled" json:"enabled"`                   // 是否启用升级功能
+	AgentScriptURL string `yaml:"agent_script_url" json:"agent_script_url"` // Agent升级脚本URL
+	ProxyScriptURL string `yaml:"proxy_script_url" json:"proxy_script_url"` // Proxy升级脚本URL
+	Timeout        int    `yaml:"timeout" json:"timeout"`                   // 升级超时时间（秒）
+	VerifyChecksum bool   `yaml:"verify_checksum" json:"verify_checksum"`   // 是否验证校验和
+	BackupEnabled  bool   `yaml:"backup_enabled" json:"backup_enabled"`     // 是否启用备份
 }
 
 // LoadConfig 从文件加载配置
@@ -192,6 +203,20 @@ func setDefaults(config *Config) {
 	if config.WebSocket.AgentID == "" {
 		config.WebSocket.AgentID = "agent-001"
 	}
+
+	// 升级配置默认值
+	if config.Upgrade.AgentScriptURL == "" {
+		config.Upgrade.AgentScriptURL = "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh"
+	}
+	if config.Upgrade.ProxyScriptURL == "" {
+		config.Upgrade.ProxyScriptURL = "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh"
+	}
+	if config.Upgrade.Timeout == 0 {
+		config.Upgrade.Timeout = 600 // 10分钟超时
+	}
+	// 默认启用升级功能和备份
+	config.Upgrade.Enabled = true
+	config.Upgrade.BackupEnabled = true
 }
 
 // Validate 验证配置的有效性

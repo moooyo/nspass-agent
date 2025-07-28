@@ -60,3 +60,12 @@ websocket:
   metrics_interval: 60s
   reconnect_interval: 5s
   max_reconnect_attempts: 0  # 0表示无限重试
+
+# 升级配置
+upgrade:
+  enabled: true                                                                               # 是否启用升级功能
+  agent_script_url: "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh"  # Agent升级脚本URL
+  proxy_script_url: "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh"  # Proxy升级脚本URL
+  timeout: 600                                                                               # 升级超时时间（秒）
+  verify_checksum: false                                                                     # 是否验证校验和
+  backup_enabled: true                                                                       # 是否启用备份

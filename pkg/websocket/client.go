@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -396,6 +399,10 @@ func (c *Client) processMessage(message *model.WebSocketMessage) {
 		c.handleEgressConfig(message)
 	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_IPTABLES_CONFIG:
 		c.handleIptablesConfig(message)
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_AGENT_UPGRADE:
+		c.handleAgentUpgradeMessage(message)
+	case model.WebSocketMessageType_WEBSOCKET_MESSAGE_SERVER_TYPE_PROXY_UPGRADE:
+		c.handleProxyUpgradeMessage(message)
 	default:
 		c.log.WithField("message_type", message.MessageType.String()).Warn("未知的消息类型")
 	}
@@ -1165,4 +1172,245 @@ func (c *Client) sendIPInfo(ipInfo *model.IpInfo) {
 		"ipv4":       ipInfo.Ipv4Address,
 		"ipv6_count": len(ipInfo.Ipv6Address),
 	}).Info("发送IP信息消息")
+}
+
+// handleAgentUpgradeMessage 处理Agent升级消息
+func (c *Client) handleAgentUpgradeMessage(message *model.WebSocketMessage) {
+	c.log.WithField("message_id", message.MessageId).Info("收到Agent升级消息")
+
+	// 检查升级功能是否启用
+	if !c.config.Upgrade.Enabled {
+		c.log.Warn("升级功能已禁用")
+		c.sendErrorAck(message.MessageId, "升级功能已禁用", "upgrade.enabled = false")
+		return
+	}
+
+	// 解析升级消息
+	var upgradeMessage model.AgentUpgradeMessage
+	if err := message.Payload.UnmarshalTo(&upgradeMessage); err != nil {
+		c.log.WithError(err).Error("解析Agent升级消息失败")
+		c.sendErrorAck(message.MessageId, "解析Agent升级消息失败", err.Error())
+		return
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"target_version": upgradeMessage.TargetVersion,
+		"script_url":     c.config.Upgrade.AgentScriptURL,
+	}).Info("开始Agent升级")
+
+	// 异步执行升级
+	go c.executeAgentUpgrade(message.MessageId, &upgradeMessage)
+}
+
+// handleProxyUpgradeMessage 处理Proxy升级消息
+func (c *Client) handleProxyUpgradeMessage(message *model.WebSocketMessage) {
+	c.log.WithField("message_id", message.MessageId).Info("收到Proxy升级消息")
+
+	// 检查升级功能是否启用
+	if !c.config.Upgrade.Enabled {
+		c.log.Warn("升级功能已禁用")
+		c.sendErrorAck(message.MessageId, "升级功能已禁用", "upgrade.enabled = false")
+		return
+	}
+
+	// 解析升级消息
+	var upgradeMessage model.ProxyUpgradeMessage
+	if err := message.Payload.UnmarshalTo(&upgradeMessage); err != nil {
+		c.log.WithError(err).Error("解析Proxy升级消息失败")
+		c.sendErrorAck(message.MessageId, "解析Proxy升级消息失败", err.Error())
+		return
+	}
+
+	c.log.WithFields(logrus.Fields{
+		"target_version": upgradeMessage.TargetVersion,
+		"script_url":     c.config.Upgrade.ProxyScriptURL,
+	}).Info("开始Proxy升级")
+
+	// 异步执行升级
+	go c.executeProxyUpgrade(message.MessageId, &upgradeMessage)
+}
+
+// executeAgentUpgrade 执行Agent升级
+func (c *Client) executeAgentUpgrade(messageId string, upgradeMsg *model.AgentUpgradeMessage) {
+	c.log.Info("开始执行Agent升级")
+
+	// 设置升级超时
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.config.Upgrade.Timeout)*time.Second)
+	defer cancel()
+
+	// 创建临时目录
+	tempDir, err := os.MkdirTemp("", "agent_upgrade_*")
+	if err != nil {
+		c.log.WithError(err).Error("创建临时目录失败")
+		c.sendErrorAck(messageId, "创建临时目录失败", err.Error())
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 下载升级脚本（使用配置中的安全URL）
+	scriptPath := filepath.Join(tempDir, "agent_upgrade.sh")
+	if err := c.downloadScript(c.config.Upgrade.AgentScriptURL, scriptPath); err != nil {
+		c.log.WithError(err).Error("下载Agent升级脚本失败")
+		c.sendErrorAck(messageId, "下载升级脚本失败", err.Error())
+		return
+	}
+
+	// 设置脚本权限
+	if err := os.Chmod(scriptPath, 0755); err != nil {
+		c.log.WithError(err).Error("设置脚本权限失败")
+		c.sendErrorAck(messageId, "设置脚本权限失败", err.Error())
+		return
+	}
+
+	// 构建升级参数
+	args := []string{}
+
+	// 如果消息中指定了目标版本，则传递给脚本
+	if upgradeMsg.TargetVersion != "" {
+		args = append(args, "--target-version="+upgradeMsg.TargetVersion)
+	}
+
+	// 根据配置设置备份选项
+	if !c.config.Upgrade.BackupEnabled {
+		args = append(args, "--no-backup")
+	}
+
+	// 设置超时参数
+	args = append(args, fmt.Sprintf("--timeout=%d", c.config.Upgrade.Timeout))
+
+	// 执行升级脚本
+	cmd := exec.CommandContext(ctx, scriptPath, args...)
+	cmd.Dir = tempDir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		c.log.WithError(err).WithField("output", string(output)).Error("Agent升级失败")
+		c.sendErrorAck(messageId, "Agent升级失败", fmt.Sprintf("%s\n输出: %s", err.Error(), string(output)))
+		return
+	}
+
+	c.log.Info("Agent升级成功完成")
+	c.sendSuccessAck(messageId, "Agent升级成功", string(output))
+}
+
+// executeProxyUpgrade 执行Proxy升级
+func (c *Client) executeProxyUpgrade(messageId string, upgradeMsg *model.ProxyUpgradeMessage) {
+	c.log.Info("开始执行Proxy升级")
+
+	// 设置升级超时
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.config.Upgrade.Timeout)*time.Second)
+	defer cancel()
+
+	// 创建临时目录
+	tempDir, err := os.MkdirTemp("", "proxy_upgrade_*")
+	if err != nil {
+		c.log.WithError(err).Error("创建临时目录失败")
+		c.sendErrorAck(messageId, "创建临时目录失败", err.Error())
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	// 下载升级脚本（使用配置中的安全URL）
+	scriptPath := filepath.Join(tempDir, "proxy_upgrade.sh")
+	if err := c.downloadScript(c.config.Upgrade.ProxyScriptURL, scriptPath); err != nil {
+		c.log.WithError(err).Error("下载Proxy升级脚本失败")
+		c.sendErrorAck(messageId, "下载升级脚本失败", err.Error())
+		return
+	}
+
+	// 设置脚本权限
+	if err := os.Chmod(scriptPath, 0755); err != nil {
+		c.log.WithError(err).Error("设置脚本权限失败")
+		c.sendErrorAck(messageId, "设置脚本权限失败", err.Error())
+		return
+	}
+
+	// 构建升级参数
+	args := []string{}
+
+	// 如果消息中指定了目标版本，则传递给脚本
+	if upgradeMsg.TargetVersion != "" {
+		args = append(args, "--target-version="+upgradeMsg.TargetVersion)
+	}
+
+	// 根据配置设置备份选项
+	if !c.config.Upgrade.BackupEnabled {
+		args = append(args, "--no-backup")
+	}
+
+	// 设置超时参数
+	args = append(args, fmt.Sprintf("--timeout=%d", c.config.Upgrade.Timeout))
+
+	// 执行升级脚本
+	cmd := exec.CommandContext(ctx, scriptPath, args...)
+	cmd.Dir = tempDir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		c.log.WithError(err).WithField("output", string(output)).Error("Proxy升级失败")
+		c.sendErrorAck(messageId, "Proxy升级失败", fmt.Sprintf("%s\n输出: %s", err.Error(), string(output)))
+		return
+	}
+
+	c.log.Info("Proxy升级成功完成")
+	c.sendSuccessAck(messageId, "Proxy升级成功", string(output))
+}
+
+// downloadScript 下载脚本文件
+func (c *Client) downloadScript(downloadURL, scriptPath string) error {
+	c.log.WithFields(logrus.Fields{
+		"download_url": downloadURL,
+		"script_path":  scriptPath,
+	}).Info("下载升级脚本")
+
+	// 创建HTTP请求
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("下载请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败，HTTP状态码: %d", resp.StatusCode)
+	}
+
+	// 创建文件
+	file, err := os.Create(scriptPath)
+	if err != nil {
+		return fmt.Errorf("创建脚本文件失败: %w", err)
+	}
+	defer file.Close()
+
+	// 复制内容
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return fmt.Errorf("写入脚本文件失败: %w", err)
+	}
+
+	c.log.Info("升级脚本下载完成")
+	return nil
+}
+
+// sendSuccessAck 发送成功确认消息
+func (c *Client) sendSuccessAck(messageId, title, output string) {
+	ackMessage := &model.AckMessage{
+		MessageId: messageId,
+	}
+
+	payload, err := anypb.New(ackMessage)
+	if err != nil {
+		c.log.WithError(err).Error("创建成功ACK消息载荷失败")
+		return
+	}
+
+	wsMessage := &model.WebSocketMessage{
+		MessageId:     c.generateMessageID(),
+		MessageType:   model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_ACK,
+		Timestamp:     timestamppb.Now(),
+		Payload:       payload,
+		CorrelationId: messageId,
+	}
+
+	c.sendMessage(wsMessage)
 }

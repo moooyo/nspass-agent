@@ -1100,6 +1100,25 @@ logger:
   max_age: 30
   compress: true
 
+# WebSocket配置
+websocket:
+  enabled: true
+  server_url: "ws://localhost:8080/ws"
+  agent_id: "agent-001"
+  heartbeat_interval: 30s
+  metrics_interval: 60s
+  reconnect_interval: 5s
+  max_reconnect_attempts: 0
+
+# 升级配置
+upgrade:
+  enabled: true
+  agent_script_url: "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh"
+  proxy_script_url: "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh"
+  timeout: 600
+  verify_checksum: false
+  backup_enabled: true
+
 # 更新间隔（秒）
 update_interval: 300
 EOF
@@ -1330,6 +1349,12 @@ show_post_install_info() {
     echo ""
     echo "📋 配置检查:"
     echo "   配置文件语法检查: $INSTALL_DIR/nspass-agent --config $CONFIG_DIR/config.yaml --check"
+    echo ""
+    echo "🔄 升级功能:"
+    echo "   Agent支持远程升级功能，通过WebSocket接收升级指令"
+    echo "   升级脚本URL在配置文件中硬编码，确保安全性"
+    echo "   升级配置位置: $CONFIG_DIR/config.yaml (upgrade节)"
+    echo "   手动升级脚本: scripts/agent_upgrade.sh 和 scripts/proxy_upgrade.sh"
     echo ""
     echo "📚 更多信息: https://github.com/$GITHUB_REPO"
     echo ""

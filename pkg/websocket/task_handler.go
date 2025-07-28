@@ -272,6 +272,7 @@ func (h *DefaultTaskHandler) HandleTask(ctx context.Context, task *model.TaskMes
 		result, err = h.handleCollectMetrics(ctx, task)
 	case model.TaskType_TASK_TYPE_HEALTH_CHECK:
 		result, err = h.handleHealthCheck(ctx, task)
+
 	default:
 		err = fmt.Errorf("不支持的任务类型: %s", task.TaskType.String())
 	}
@@ -355,9 +356,9 @@ func (h *DefaultTaskHandler) updateIPTablesConfig(ctx context.Context, params *m
 
 	// 这里可以根据具体的配置类型来处理不同的更新逻辑
 	// 目前我们让agent通过常规的配置同步来处理iptables更新
-	
+
 	output := fmt.Sprintf("iptables配置更新请求已处理，配置类型: %s", params.ConfigType)
-	
+
 	// 如果需要重启，可以设置相应的标志
 	if params.RestartRequired {
 		output += "，需要重启服务"
