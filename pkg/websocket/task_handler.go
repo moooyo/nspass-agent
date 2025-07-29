@@ -9,9 +9,9 @@ import (
 
 	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
+	"github.com/nspass/nspass-agent/pkg/interfaces"
 	"github.com/nspass/nspass-agent/pkg/iptables"
-	"github.com/nspass/nspass-agent/pkg/logger"
-	"github.com/nspass/nspass-agent/pkg/proxy"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -33,14 +33,14 @@ type TaskRecord struct {
 type TaskManager struct {
 	tasks map[string]*TaskRecord
 	mu    sync.RWMutex
-	log   *logrus.Entry
+	log   interfaces.Logger
 }
 
 // NewTaskManager creates a new task manager
 func NewTaskManager() *TaskManager {
 	return &TaskManager{
 		tasks: make(map[string]*TaskRecord),
-		log:   logger.GetComponentLogger("task-manager"),
+		log:   logging.GetComponentLogger("task-manager"),
 	}
 }
 
@@ -165,20 +165,20 @@ func (tm *TaskManager) GetTaskStats() map[string]int {
 // DefaultTaskHandler 默认任务处理器
 type DefaultTaskHandler struct {
 	config          *config.Config
-	proxyManager    *proxy.Manager
+	proxyManager    interfaces.ProxyManager
 	iptablesManager iptables.ManagerInterface
 	taskManager     *TaskManager
-	log             *logrus.Entry
+	log             interfaces.Logger
 }
 
 // NewDefaultTaskHandler 创建默认任务处理器
-func NewDefaultTaskHandler(cfg *config.Config, proxyManager *proxy.Manager, iptablesManager iptables.ManagerInterface) *DefaultTaskHandler {
+func NewDefaultTaskHandler(cfg *config.Config, proxyManager interfaces.ProxyManager, iptablesManager iptables.ManagerInterface) *DefaultTaskHandler {
 	return &DefaultTaskHandler{
 		config:          cfg,
 		proxyManager:    proxyManager,
 		iptablesManager: iptablesManager,
 		taskManager:     NewTaskManager(),
-		log:             logger.GetComponentLogger("task-handler"),
+		log:             logging.GetComponentLogger("task-handler"),
 	}
 }
 

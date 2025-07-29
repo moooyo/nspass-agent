@@ -8,7 +8,7 @@ import (
 
 	"github.com/nspass/nspass-agent/pkg/agent"
 	"github.com/nspass/nspass-agent/pkg/config"
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/logging"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -50,14 +50,14 @@ func runAgent(cmd *cobra.Command, args []string) {
 	startTime := time.Now()
 
 	// 先使用基础日志配置，稍后会被配置文件覆盖
-	basicConfig := logger.DefaultConfig()
+	basicConfig := logging.DefaultConfig()
 	basicConfig.Level = logLevel
 	basicConfig.Output = "stdout"
-	if err := logger.Initialize(basicConfig); err != nil {
+	if err := logging.Initialize(basicConfig); err != nil {
 		logrus.Fatal("初始化基础日志失败: ", err)
 	}
 
-	systemLogger := logger.GetSystemLogger()
+	systemLogger := logging.GetSystemLogger()
 	systemLogger.WithFields(logrus.Fields{
 		"version":    Version,
 		"commit":     Commit,
@@ -69,7 +69,7 @@ func runAgent(cmd *cobra.Command, args []string) {
 	// 加载配置
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		logger.LogError(err, "加载配置文件失败", logrus.Fields{
+		logging.LogError(err, "加载配置文件失败", logrus.Fields{
 			"config_path": configPath,
 		})
 		os.Exit(1)
@@ -77,21 +77,21 @@ func runAgent(cmd *cobra.Command, args []string) {
 
 	// 验证配置
 	if err := cfg.Validate(); err != nil {
-		logger.LogError(err, "配置验证失败", logrus.Fields{
+		logging.LogError(err, "配置验证失败", logrus.Fields{
 			"config_path": configPath,
 		})
 		os.Exit(1)
 	}
 
 	// 根据配置重新初始化日志系统
-	if err := logger.Initialize(cfg.Logger); err != nil {
+	if err := logging.Initialize(cfg.Logger); err != nil {
 		systemLogger.WithError(err).Warn("根据配置重新初始化日志失败，继续使用基础配置")
 	} else {
 		systemLogger.WithField("config", cfg.Logger).Info("日志系统已根据配置重新初始化")
 	}
 
 	// 记录启动信息
-	logger.LogStartup("nspass-agent", Version, map[string]interface{}{
+	logging.LogStartup("nspass-agent", Version, map[string]interface{}{
 		"server_id":       cfg.ServerID,
 		"config_path":     configPath,
 		"api_url":         cfg.API.BaseURL,
@@ -100,20 +100,20 @@ func runAgent(cmd *cobra.Command, args []string) {
 		"proxies":         cfg.Proxy.EnabledTypes,
 	})
 
-	// 创建Agent服务
-	systemLogger.Info("初始化Agent服务...")
-	agentService, err := agent.NewService(cfg, cfg.ServerID)
+	// 创建增强Agent服务
+	systemLogger.Info("初始化增强Agent服务...")
+	agentService, err := agent.NewEnhancedService(cfg, cfg.ServerID)
 	if err != nil {
-		logger.LogError(err, "创建Agent服务失败", logrus.Fields{
+		logging.LogError(err, "创建增强Agent服务失败", logrus.Fields{
 			"server_id": cfg.ServerID,
 		})
 		os.Exit(1)
 	}
 
-	// 启动Agent服务
-	systemLogger.Info("启动Agent服务...")
+	// 启动增强Agent服务
+	systemLogger.Info("启动增强Agent服务...")
 	if err := agentService.Start(); err != nil {
-		logger.LogError(err, "启动Agent服务失败", logrus.Fields{
+		logging.LogError(err, "启动增强Agent服务失败", logrus.Fields{
 			"server_id": cfg.ServerID,
 		})
 		os.Exit(1)
@@ -122,7 +122,7 @@ func runAgent(cmd *cobra.Command, args []string) {
 	systemLogger.WithFields(logrus.Fields{
 		"server_id":        cfg.ServerID,
 		"startup_duration": time.Since(startTime).Milliseconds(),
-	}).Info("NSPass Agent 启动完成")
+	}).Info("增强NSPass Agent 启动完成")
 
 	// 等待退出信号
 	sigChan := make(chan os.Signal, 1)
@@ -130,19 +130,19 @@ func runAgent(cmd *cobra.Command, args []string) {
 	receivedSignal := <-sigChan
 
 	shutdownStart := time.Now()
-	systemLogger.WithField("signal", receivedSignal).Info("NSPass Agent 正在关闭...")
+	systemLogger.WithField("signal", receivedSignal).Info("增强NSPass Agent 正在关闭...")
 
-	// 停止Agent服务
+	// 停止增强Agent服务
 	if err := agentService.Stop(); err != nil {
-		logger.LogError(err, "停止Agent服务失败", nil)
+		logging.LogError(err, "停止增强Agent服务失败", nil)
 	}
 
 	shutdownDuration := time.Since(shutdownStart)
 	totalDuration := time.Since(startTime)
 
-	logger.LogShutdown("nspass-agent", shutdownDuration)
+	logging.LogShutdown("nspass-agent", shutdownDuration)
 	systemLogger.WithFields(logrus.Fields{
 		"shutdown_duration": shutdownDuration.Milliseconds(),
 		"total_duration":    totalDuration.Milliseconds(),
-	}).Info("NSPass Agent 已安全关闭")
+	}).Info("增强NSPass Agent 已安全关闭")
 }

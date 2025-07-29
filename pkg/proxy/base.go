@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/nspass/nspass-agent/pkg/config"
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,7 +32,7 @@ func NewBaseProxy(proxyType string, cfg config.ProxyConfig, configFileName strin
 		pidFile:    filepath.Join(cfg.ConfigPath, proxyType+".pid"),
 	}
 
-	logger.LogStartup(proxyType+"-proxy", "1.0", map[string]interface{}{
+	logging.LogStartup(proxyType+"-proxy", "1.0", map[string]interface{}{
 		"config_path": base.configPath,
 		"pid_file":    base.pidFile,
 	})
@@ -59,7 +59,7 @@ func (b *BaseProxy) GetPidFile() string {
 func (b *BaseProxy) EnsureConfigDirectory() error {
 	configDir := filepath.Dir(b.configPath)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
-		logger.LogError(err, "创建配置目录失败", logrus.Fields{
+		logging.LogError(err, "创建配置目录失败", logrus.Fields{
 			"proxy_type":  b.proxyType,
 			"config_dir":  configDir,
 		})
@@ -71,7 +71,7 @@ func (b *BaseProxy) EnsureConfigDirectory() error {
 // InstallPackage 使用系统包管理器安装软件包
 func (b *BaseProxy) InstallPackage(packageName string) error {
 	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", b.proxyType)
+	log := logging.GetProxyLogger().WithField("proxy_type", b.proxyType)
 
 	var cmd *exec.Cmd
 	var pkgManager string
@@ -83,7 +83,7 @@ func (b *BaseProxy) InstallPackage(packageName string) error {
 		// 更新包列表
 		cmd = exec.Command("apt-get", "update")
 		if err := cmd.Run(); err != nil {
-			logger.LogError(err, "更新包列表失败", logrus.Fields{
+			logging.LogError(err, "更新包列表失败", logrus.Fields{
 				"pkg_manager": pkgManager,
 			})
 			return fmt.Errorf("更新包列表失败: %w", err)
@@ -100,13 +100,13 @@ func (b *BaseProxy) InstallPackage(packageName string) error {
 		log.Debug("使用pacman包管理器")
 		cmd = exec.Command("pacman", "-S", "--noconfirm", packageName)
 	} else {
-		logger.LogError(fmt.Errorf("未找到支持的包管理器"),
+		logging.LogError(fmt.Errorf("未找到支持的包管理器"),
 			"不支持的系统，无法自动安装"+b.proxyType, nil)
 		return fmt.Errorf("不支持的系统，无法自动安装%s", b.proxyType)
 	}
 
 	if err := cmd.Run(); err != nil {
-		logger.LogError(err, "安装软件包失败", logrus.Fields{
+		logging.LogError(err, "安装软件包失败", logrus.Fields{
 			"pkg_manager": pkgManager,
 			"package":     packageName,
 		})
@@ -114,7 +114,7 @@ func (b *BaseProxy) InstallPackage(packageName string) error {
 	}
 
 	duration := time.Since(startTime)
-	logger.LogPerformance(b.proxyType+"_install", duration, logrus.Fields{
+	logging.LogPerformance(b.proxyType+"_install", duration, logrus.Fields{
 		"pkg_manager": pkgManager,
 		"package":     packageName,
 	})
@@ -130,7 +130,7 @@ func (b *BaseProxy) InstallPackage(packageName string) error {
 // CreateBinaryPlaceholder 创建二进制文件占位符（用于测试）
 func (b *BaseProxy) CreateBinaryPlaceholder(installDir, binaryName string) error {
 	if err := os.MkdirAll(installDir, 0755); err != nil {
-		logger.LogError(err, "创建安装目录失败", logrus.Fields{
+		logging.LogError(err, "创建安装目录失败", logrus.Fields{
 			"install_dir": installDir,
 		})
 		return fmt.Errorf("创建安装目录失败: %w", err)
@@ -139,7 +139,7 @@ func (b *BaseProxy) CreateBinaryPlaceholder(installDir, binaryName string) error
 	binaryPath := filepath.Join(installDir, binaryName)
 	content := fmt.Sprintf("#!/bin/bash\necho '%s placeholder'\n", b.proxyType)
 	if err := os.WriteFile(binaryPath, []byte(content), 0755); err != nil {
-		logger.LogError(err, "创建二进制文件失败", logrus.Fields{
+		logging.LogError(err, "创建二进制文件失败", logrus.Fields{
 			"binary_path": binaryPath,
 		})
 		return fmt.Errorf("创建二进制文件失败: %w", err)
@@ -148,7 +148,7 @@ func (b *BaseProxy) CreateBinaryPlaceholder(installDir, binaryName string) error
 	// 创建符号链接到系统PATH
 	systemBin := "/usr/local/bin/" + binaryName
 	if err := os.Symlink(binaryPath, systemBin); err != nil && !os.IsExist(err) {
-		logger.LogError(err, "创建符号链接失败", logrus.Fields{
+		logging.LogError(err, "创建符号链接失败", logrus.Fields{
 			"source": binaryPath,
 			"target": systemBin,
 		})
@@ -215,7 +215,7 @@ func (b *BaseProxy) StopProcess() error {
 		return fmt.Errorf("进程未运行")
 	}
 
-	log := logger.GetProxyLogger().WithFields(logrus.Fields{
+	log := logging.GetProxyLogger().WithFields(logrus.Fields{
 		"proxy_type": b.proxyType,
 		"pid":        pid,
 	})

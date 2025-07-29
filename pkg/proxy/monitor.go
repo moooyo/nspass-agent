@@ -7,7 +7,8 @@ import (
 
 	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/interfaces"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -52,11 +53,11 @@ func (ps *ProxyState) SetStatus(status string) {
 		ps.LastCheck = time.Now()
 
 		// 记录状态变更
-		logger.LogStateChange(
+		logging.LogStateChange(
 			ps.Type.String(),
 			oldStatus,
 			status,
-			"代理状态监控检测到变化",
+			map[string]interface{}{"reason": "代理状态监控检测到变化"},
 		)
 	}
 }
@@ -127,7 +128,7 @@ type ProxyMonitor struct {
 	cancel  context.CancelFunc     // 取消函数
 	ticker  *time.Ticker           // 定时器
 	running bool                   // 是否运行中
-	log     *logrus.Entry          // 日志记录器
+	log     interfaces.Logger      // 日志记录器
 
 	// 统计信息
 	stats ProxyMonitorStats
@@ -153,11 +154,11 @@ func NewProxyMonitor(config config.MonitorConfig) *ProxyMonitor {
 		ctx:     ctx,
 		cancel:  cancel,
 		running: false,
-		log:     logger.GetProxyLogger().WithField("component", "monitor"),
+		log:     logging.GetProxyLogger().WithField("component", "monitor"),
 		stats:   ProxyMonitorStats{},
 	}
 
-	logger.LogStartup("proxy-monitor", "1.0", map[string]interface{}{
+	logging.LogStartup("proxy-monitor", "1.0", map[string]interface{}{
 		"check_interval":   config.CheckInterval,
 		"restart_cooldown": config.RestartCooldown,
 		"max_restarts":     config.MaxRestarts,
@@ -361,7 +362,7 @@ func (pm *ProxyMonitor) performHealthCheck() {
 	wg.Wait()
 
 	duration := time.Since(startTime)
-	logger.LogPerformance("proxy_health_check", duration, logrus.Fields{
+	logging.LogPerformance("proxy_health_check", duration, logrus.Fields{
 		"checked_proxies": len(states),
 	})
 
@@ -490,7 +491,7 @@ func (pm *ProxyMonitor) attemptRestart(state *ProxyState, reason string) {
 	pm.stats.mu.Unlock()
 
 	// 记录性能指标
-	logger.LogPerformance("proxy_restart", duration, logrus.Fields{
+	logging.LogPerformance("proxy_restart", duration, logrus.Fields{
 		"proxy_id":   proxyID,
 		"proxy_type": proxyType,
 		"success":    success,
@@ -502,7 +503,7 @@ func (pm *ProxyMonitor) attemptRestart(state *ProxyState, reason string) {
 		log.WithField("duration_ms", duration.Milliseconds()).Info("代理重启成功")
 
 		// 记录审计日志
-		logger.LogAudit("proxy_auto_restart", "system", logrus.Fields{
+		logging.LogAudit("proxy_auto_restart", "system", logrus.Fields{
 			"proxy_id":   proxyID,
 			"proxy_type": proxyType,
 			"reason":     reason,
@@ -515,7 +516,7 @@ func (pm *ProxyMonitor) attemptRestart(state *ProxyState, reason string) {
 }
 
 // performRestart 执行重启操作
-func (pm *ProxyMonitor) performRestart(instance ProxyInterface, config *model.EgressItem, log *logrus.Entry) bool {
+func (pm *ProxyMonitor) performRestart(instance ProxyInterface, config *model.EgressItem, log interfaces.Logger) bool {
 	// 1. 尝试停止进程（如果还在运行）
 	log.Debug("停止代理进程")
 	if err := instance.Stop(); err != nil {

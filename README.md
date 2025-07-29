@@ -246,7 +246,7 @@ make run
 ```bash
 make build        # 构建二进制文件
 make run          # 运行应用
-make test         # 运行测试
+make validate     # 验证配置和代码
 make gen-proto    # 生成 protobuf 文件
 make clean        # 清理构建文件
 make lint         # 代码检查

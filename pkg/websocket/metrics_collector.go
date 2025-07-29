@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/logger"
-	"github.com/nspass/nspass-agent/pkg/proxy"
+	"github.com/nspass/nspass-agent/pkg/interfaces"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/load"
@@ -23,9 +23,9 @@ import (
 
 // DefaultMetricsCollector 默认监控数据收集器
 type DefaultMetricsCollector struct {
-	proxyManager *proxy.Manager
+	proxyManager interfaces.ProxyManager
 	taskProvider TaskStatsProvider
-	log          *logrus.Entry
+	log          interfaces.Logger
 
 	// 缓存上次的数据用于计算差值
 	lastTrafficData  *TrafficData
@@ -57,10 +57,10 @@ type NetworkStats struct {
 }
 
 // NewDefaultMetricsCollector 创建默认监控数据收集器
-func NewDefaultMetricsCollector(proxyManager *proxy.Manager) *DefaultMetricsCollector {
+func NewDefaultMetricsCollector(proxyManager interfaces.ProxyManager) *DefaultMetricsCollector {
 	return &DefaultMetricsCollector{
 		proxyManager:   proxyManager,
-		log:            logger.GetComponentLogger("metrics-collector"),
+		log:            logging.GetComponentLogger("metrics-collector"),
 		lastUpdateTime: time.Now(),
 	}
 }

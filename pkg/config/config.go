@@ -4,10 +4,69 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"gopkg.in/yaml.v3"
 )
+
+// DefaultValues 包含所有默认配置值
+type DefaultValues struct {
+	UpdateInterval             int
+	LogLevel                   string
+	APITimeout                 int
+	APIRetryCount              int
+	APIRetryDelay              int
+	ProxyBinPath               string
+	ProxyConfigPath            string
+	ProxyEnabledTypes          []string
+	MonitorCheckInterval       int
+	MonitorRestartCooldown     int
+	MonitorMaxRestarts         int
+	MonitorHealthTimeout       int
+	IPTablesBackupPath         string
+	IPTablesChainPrefix        string
+	LoggerMaxSize              int
+	LoggerMaxBackups           int
+	LoggerMaxAge               int
+	WebSocketHeartbeatInterval string
+	WebSocketMetricsInterval   string
+	WebSocketReconnectInterval string
+	WebSocketAgentID           string
+	UpgradeAgentScriptURL      string
+	UpgradeProxyScriptURL      string
+	UpgradeTimeout             int
+}
+
+// GetDefaultValues 返回默认配置值
+func GetDefaultValues() DefaultValues {
+	return DefaultValues{
+		UpdateInterval:             300, // 5分钟
+		LogLevel:                   "info",
+		APITimeout:                 30,
+		APIRetryCount:              3,
+		APIRetryDelay:              5,
+		ProxyBinPath:               "/usr/local/bin",
+		ProxyConfigPath:            "/etc/nspass/proxy",
+		ProxyEnabledTypes:          []string{"shadowsocks", "trojan", "snell"},
+		MonitorCheckInterval:       30,
+		MonitorRestartCooldown:     60,
+		MonitorMaxRestarts:         10,
+		MonitorHealthTimeout:       5,
+		IPTablesBackupPath:         "/etc/nspass/iptables-backup",
+		IPTablesChainPrefix:        "NSPASS_",
+		LoggerMaxSize:              100,
+		LoggerMaxBackups:           5,
+		LoggerMaxAge:               30,
+		WebSocketHeartbeatInterval: "30s",
+		WebSocketMetricsInterval:   "60s",
+		WebSocketReconnectInterval: "5s",
+		WebSocketAgentID:           "agent-001",
+		UpgradeAgentScriptURL:      "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh",
+		UpgradeProxyScriptURL:      "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh",
+		UpgradeTimeout:             600, // 10分钟
+	}
+}
 
 // Config 主配置结构
 type Config struct {
@@ -15,7 +74,7 @@ type Config struct {
 	API            APIConfig       `yaml:"api" json:"api"`
 	Proxy          ProxyConfig     `yaml:"proxy" json:"proxy"`
 	IPTables       IPTablesConfig  `yaml:"iptables" json:"iptables"`
-	Logger         logger.Config   `yaml:"logger" json:"logger"`
+	Logger         logging.Config  `yaml:"logger" json:"logger"`
 	WebSocket      WebSocketConfig `yaml:"websocket" json:"websocket"`             // WebSocket配置
 	Upgrade        UpgradeConfig   `yaml:"upgrade" json:"upgrade"`                 // 升级配置
 	UpdateInterval int             `yaml:"update_interval" json:"update_interval"` // 秒
@@ -107,133 +166,241 @@ func LoadConfig(path string) (*Config, error) {
 
 // setDefaults 设置默认配置值
 func setDefaults(config *Config) {
+	defaults := GetDefaultValues()
+
+	// 基础配置
 	if config.UpdateInterval == 0 {
-		config.UpdateInterval = 300 // 5分钟
+		config.UpdateInterval = defaults.UpdateInterval
 	}
-
 	if config.LogLevel == "" {
-		config.LogLevel = "info"
+		config.LogLevel = defaults.LogLevel
 	}
 
-	if config.API.Timeout == 0 {
-		config.API.Timeout = 30
+	// API配置
+	setAPIDefaults(&config.API, defaults)
+
+	// 代理配置
+	setProxyDefaults(&config.Proxy, defaults)
+
+	// IPTables配置
+	setIPTablesDefaults(&config.IPTables, defaults)
+
+	// 日志配置
+	setLoggerDefaults(&config.Logger, config.LogLevel, defaults)
+
+	// WebSocket配置
+	setWebSocketDefaults(&config.WebSocket, defaults)
+
+	// 升级配置
+	setUpgradeDefaults(&config.Upgrade, defaults)
+}
+
+// setAPIDefaults 设置API配置默认值
+func setAPIDefaults(api *APIConfig, defaults DefaultValues) {
+	if api.Timeout == 0 {
+		api.Timeout = defaults.APITimeout
+	}
+	if api.RetryCount == 0 {
+		api.RetryCount = defaults.APIRetryCount
+	}
+	if api.RetryDelay == 0 {
+		api.RetryDelay = defaults.APIRetryDelay
+	}
+}
+
+// setProxyDefaults 设置代理配置默认值
+func setProxyDefaults(proxy *ProxyConfig, defaults DefaultValues) {
+	if proxy.BinPath == "" {
+		proxy.BinPath = defaults.ProxyBinPath
+	}
+	if proxy.ConfigPath == "" {
+		proxy.ConfigPath = defaults.ProxyConfigPath
+	}
+	if len(proxy.EnabledTypes) == 0 {
+		proxy.EnabledTypes = defaults.ProxyEnabledTypes
 	}
 
-	if config.API.RetryCount == 0 {
-		config.API.RetryCount = 3
+	// 监控配置
+	if proxy.Monitor.CheckInterval == 0 {
+		proxy.Monitor.CheckInterval = defaults.MonitorCheckInterval
 	}
-
-	if config.API.RetryDelay == 0 {
-		config.API.RetryDelay = 5
+	if proxy.Monitor.RestartCooldown == 0 {
+		proxy.Monitor.RestartCooldown = defaults.MonitorRestartCooldown
 	}
-
-	if config.Proxy.BinPath == "" {
-		config.Proxy.BinPath = "/usr/local/bin"
+	if proxy.Monitor.MaxRestarts == 0 {
+		proxy.Monitor.MaxRestarts = defaults.MonitorMaxRestarts
 	}
-
-	if config.Proxy.ConfigPath == "" {
-		config.Proxy.ConfigPath = "/etc/nspass/proxy"
+	if proxy.Monitor.HealthTimeout == 0 {
+		proxy.Monitor.HealthTimeout = defaults.MonitorHealthTimeout
 	}
+}
 
-	if len(config.Proxy.EnabledTypes) == 0 {
-		config.Proxy.EnabledTypes = []string{"shadowsocks", "trojan", "snell"}
+// setIPTablesDefaults 设置IPTables配置默认值
+func setIPTablesDefaults(iptables *IPTablesConfig, defaults DefaultValues) {
+	if iptables.BackupPath == "" {
+		iptables.BackupPath = defaults.IPTablesBackupPath
 	}
-
-	if config.Proxy.Monitor.CheckInterval == 0 {
-		config.Proxy.Monitor.CheckInterval = 30 // 30秒检查一次
+	if iptables.ChainPrefix == "" {
+		iptables.ChainPrefix = defaults.IPTablesChainPrefix
 	}
+}
 
-	if config.Proxy.Monitor.RestartCooldown == 0 {
-		config.Proxy.Monitor.RestartCooldown = 60 // 重启后60秒冷却
-	}
-
-	if config.Proxy.Monitor.MaxRestarts == 0 {
-		config.Proxy.Monitor.MaxRestarts = 10 // 每小时最多重启10次
-	}
-
-	if config.Proxy.Monitor.HealthTimeout == 0 {
-		config.Proxy.Monitor.HealthTimeout = 5 // 健康检查5秒超时
-	}
-
-	if config.IPTables.BackupPath == "" {
-		config.IPTables.BackupPath = "/etc/nspass/iptables-backup"
-	}
-
-	if config.IPTables.ChainPrefix == "" {
-		config.IPTables.ChainPrefix = "NSPASS_"
-	}
-
-	// 日志配置默认值
-	if config.Logger.Level == "" {
-		if config.LogLevel != "" {
-			config.Logger.Level = config.LogLevel
+// setLoggerDefaults 设置日志配置默认值
+func setLoggerDefaults(logger *logging.Config, logLevel string, defaults DefaultValues) {
+	if logger.Level == "" {
+		if logLevel != "" {
+			logger.Level = logLevel
 		} else {
-			config.Logger.Level = "info"
+			logger.Level = defaults.LogLevel
 		}
 	}
-	if config.Logger.Format == "" {
-		config.Logger.Format = "json"
+	if logger.Format == "" {
+		logger.Format = "json"
 	}
-	if config.Logger.Output == "" {
-		config.Logger.Output = "stdout"
+	if logger.Output == "" {
+		logger.Output = "stdout"
 	}
-	if config.Logger.File == "" {
-		config.Logger.File = "/var/log/nspass/agent.log"
+	if logger.File == "" {
+		logger.File = "/var/log/nspass/agent.log"
 	}
-	if config.Logger.MaxSize == 0 {
-		config.Logger.MaxSize = 100
+	if logger.MaxSize == 0 {
+		logger.MaxSize = defaults.LoggerMaxSize
 	}
-	if config.Logger.MaxBackups == 0 {
-		config.Logger.MaxBackups = 5
+	if logger.MaxBackups == 0 {
+		logger.MaxBackups = defaults.LoggerMaxBackups
 	}
-	if config.Logger.MaxAge == 0 {
-		config.Logger.MaxAge = 30
+	if logger.MaxAge == 0 {
+		logger.MaxAge = defaults.LoggerMaxAge
 	}
+}
 
-	// WebSocket配置默认值
-	if config.WebSocket.HeartbeatInterval == "" {
-		config.WebSocket.HeartbeatInterval = "30s"
+// setWebSocketDefaults 设置WebSocket配置默认值
+func setWebSocketDefaults(ws *WebSocketConfig, defaults DefaultValues) {
+	if ws.HeartbeatInterval == "" {
+		ws.HeartbeatInterval = defaults.WebSocketHeartbeatInterval
 	}
-	if config.WebSocket.MetricsInterval == "" {
-		config.WebSocket.MetricsInterval = "60s"
+	if ws.MetricsInterval == "" {
+		ws.MetricsInterval = defaults.WebSocketMetricsInterval
 	}
-	if config.WebSocket.ReconnectInterval == "" {
-		config.WebSocket.ReconnectInterval = "5s"
+	if ws.ReconnectInterval == "" {
+		ws.ReconnectInterval = defaults.WebSocketReconnectInterval
 	}
-	if config.WebSocket.AgentID == "" {
-		config.WebSocket.AgentID = "agent-001"
+	if ws.AgentID == "" {
+		ws.AgentID = defaults.WebSocketAgentID
 	}
+}
 
-	// 升级配置默认值
-	if config.Upgrade.AgentScriptURL == "" {
-		config.Upgrade.AgentScriptURL = "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh"
+// setUpgradeDefaults 设置升级配置默认值
+func setUpgradeDefaults(upgrade *UpgradeConfig, defaults DefaultValues) {
+	if upgrade.AgentScriptURL == "" {
+		upgrade.AgentScriptURL = defaults.UpgradeAgentScriptURL
 	}
-	if config.Upgrade.ProxyScriptURL == "" {
-		config.Upgrade.ProxyScriptURL = "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh"
+	if upgrade.ProxyScriptURL == "" {
+		upgrade.ProxyScriptURL = defaults.UpgradeProxyScriptURL
 	}
-	if config.Upgrade.Timeout == 0 {
-		config.Upgrade.Timeout = 600 // 10分钟超时
+	if upgrade.Timeout == 0 {
+		upgrade.Timeout = defaults.UpgradeTimeout
 	}
 	// 默认启用升级功能和备份
-	config.Upgrade.Enabled = true
-	config.Upgrade.BackupEnabled = true
+	upgrade.Enabled = true
+	upgrade.BackupEnabled = true
+}
+
+// ValidationError 配置验证错误
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("配置验证失败 [%s]: %s", e.Field, e.Message)
 }
 
 // Validate 验证配置的有效性
 func (c *Config) Validate() error {
-	if c.ServerID == "" {
-		return fmt.Errorf("server_id不能为空")
-	}
+	var errors []ValidationError
 
-	if c.API.BaseURL == "" {
-		return fmt.Errorf("API base_url不能为空")
+	// 验证基础配置
+	if c.ServerID == "" {
+		errors = append(errors, ValidationError{"server_id", "不能为空"})
 	}
 
 	if c.UpdateInterval <= 0 {
-		return fmt.Errorf("update_interval必须大于0")
+		errors = append(errors, ValidationError{"update_interval", "必须大于0"})
+	}
+
+	// 验证API配置
+	if err := c.validateAPI(); err != nil {
+		errors = append(errors, err...)
+	}
+
+	// 验证WebSocket配置
+	if err := c.validateWebSocket(); err != nil {
+		errors = append(errors, err...)
+	}
+
+	// 验证代理配置
+	if err := c.validateProxy(); err != nil {
+		errors = append(errors, err...)
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("配置验证失败: %v", errors)
 	}
 
 	return nil
+}
+
+// validateAPI 验证API配置
+func (c *Config) validateAPI() []ValidationError {
+	var errors []ValidationError
+
+	if c.API.BaseURL == "" {
+		errors = append(errors, ValidationError{"api.base_url", "不能为空"})
+	}
+
+	if c.API.Timeout <= 0 {
+		errors = append(errors, ValidationError{"api.timeout", "必须大于0"})
+	}
+
+	if c.API.RetryCount < 0 {
+		errors = append(errors, ValidationError{"api.retry_count", "不能小于0"})
+	}
+
+	return errors
+}
+
+// validateWebSocket 验证WebSocket配置
+func (c *Config) validateWebSocket() []ValidationError {
+	var errors []ValidationError
+
+	if c.WebSocket.Enabled && c.WebSocket.ServerURL == "" {
+		errors = append(errors, ValidationError{"websocket.server_url", "启用WebSocket时不能为空"})
+	}
+
+	// 验证时间间隔格式
+	if c.WebSocket.HeartbeatInterval != "" {
+		if _, err := time.ParseDuration(c.WebSocket.HeartbeatInterval); err != nil {
+			errors = append(errors, ValidationError{"websocket.heartbeat_interval", "时间格式无效"})
+		}
+	}
+
+	return errors
+}
+
+// validateProxy 验证代理配置
+func (c *Config) validateProxy() []ValidationError {
+	var errors []ValidationError
+
+	if c.Proxy.Monitor.CheckInterval <= 0 {
+		errors = append(errors, ValidationError{"proxy.monitor.check_interval", "必须大于0"})
+	}
+
+	if c.Proxy.Monitor.MaxRestarts < 0 {
+		errors = append(errors, ValidationError{"proxy.monitor.max_restarts", "不能小于0"})
+	}
+
+	return errors
 }
 
 // SaveConfig 保存配置文件

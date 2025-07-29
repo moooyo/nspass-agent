@@ -1,6 +1,7 @@
 package snell
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -39,7 +40,7 @@ func New(egressItem *model.EgressItem) *Snell {
 		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%s.pid", egressItem.EgressId)),
 	}
 
-	logger.LogStartup("snell-proxy", "1.0", map[string]interface{}{
+	logging.LogStartup("snell-proxy", "1.0", map[string]interface{}{
 		"config_path": s.configPath,
 		"pid_file":    s.pidFile,
 	})
@@ -55,14 +56,14 @@ func (s *Snell) Type() string {
 // Configure 配置snell
 func (s *Snell) Configure(cfg *model.EgressItem) error {
 	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
 
 	log.WithField("config_path", s.configPath).Debug("开始配置snell")
 
 	// 确保配置目录存在
 	configDir := filepath.Dir(s.configPath)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
-		logger.LogError(err, "创建配置目录失败", logrus.Fields{
+		logging.LogError(err, "创建配置目录失败", logrus.Fields{
 			"config_dir": configDir,
 		})
 		return fmt.Errorf("创建配置目录失败: %w", err)
@@ -72,32 +73,60 @@ func (s *Snell) Configure(cfg *model.EgressItem) error {
 	if s.IsRunning() {
 		log.Debug("停止现有snell服务以更新配置")
 		if err := s.Stop(); err != nil {
-			logger.LogError(err, "停止snell服务失败", nil)
+			logging.LogError(err, "停止snell服务失败", nil)
 		}
+	}
+
+	// 从EgressItem中解析配置
+	// 通用字段：Port和Password从EgressItem直接获取
+	// 特定配置：从EgressConfig JSON解析
+	egressConfig := make(map[string]interface{})
+	if cfg.EgressConfig != "" {
+		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
+			log.WithError(err).Error("解析出口配置失败")
+			return fmt.Errorf("解析出口配置失败: %w", err)
+		}
+	}
+
+	// 验证通用字段
+	if cfg.Port == nil {
+		return fmt.Errorf("端口号不能为空")
+	}
+	if cfg.Password == nil {
+		return fmt.Errorf("密码不能为空")
 	}
 
 	// 生成snell配置
 	var configLines []string
 	configLines = append(configLines, "[snell-server]")
-	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%v", *s.egressItem.Port))
-	configLines = append(configLines, fmt.Sprintf("psk = %s", *s.egressItem.Password))
+	configLines = append(configLines, fmt.Sprintf("listen = 0.0.0.0:%d", *cfg.Port)) // 从通用字段获取
+	configLines = append(configLines, fmt.Sprintf("psk = %s", *cfg.Password))        // 从通用字段获取
 	configLines = append(configLines, "ipv6 = false")
-	if s.egressItem.SupportUdp != nil && *s.egressItem.SupportUdp {
-		configLines = append(configLines, "udp = true")
+
+	// 从特定配置获取UDP支持设置
+	if supportUdp, ok := egressConfig["support_udp"]; ok {
+		if udp, ok := supportUdp.(bool); ok && udp {
+			configLines = append(configLines, "udp = true")
+		}
+	}
+
+	// 从特定配置获取版本设置
+	if version, ok := egressConfig["version"]; ok {
+		configLines = append(configLines, fmt.Sprintf("version = %v", version))
 	}
 
 	configContent := strings.Join(configLines, "\n")
 
 	// 写入配置文件
 	if err := os.WriteFile(s.configPath, []byte(configContent), 0600); err != nil {
-		logger.LogError(err, "写入配置文件失败", logrus.Fields{
+		logging.LogError(err, "写入配置文件失败", logrus.Fields{
 			"config_path": s.configPath,
 		})
 		return fmt.Errorf("写入配置文件失败: %w", err)
 	}
 
 	duration := time.Since(startTime)
-	logger.LogPerformance("snell_configure", duration, logrus.Fields{
+	logging.LogPerformance("snell_configure", duration, logrus.Fields{
 		"config_size": len(configContent),
 	})
 
@@ -112,7 +141,7 @@ func (s *Snell) Configure(cfg *model.EgressItem) error {
 // Start 启动snell
 func (s *Snell) Start() error {
 	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
 
 	if s.IsRunning() {
 		log.Debug("snell已在运行")
@@ -120,7 +149,7 @@ func (s *Snell) Start() error {
 	}
 
 	if !s.IsInstalled() {
-		logger.LogError(fmt.Errorf("snell未安装"), "无法启动未安装的snell", nil)
+		logging.LogError(fmt.Errorf("snell未安装"), "无法启动未安装的snell", nil)
 		return fmt.Errorf("snell未安装")
 	}
 
@@ -132,7 +161,7 @@ func (s *Snell) Start() error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
-		logger.LogError(err, "启动snell失败", logrus.Fields{
+		logging.LogError(err, "启动snell失败", logrus.Fields{
 			"config_path": s.configPath,
 		})
 		return fmt.Errorf("启动snell失败: %w", err)
@@ -141,19 +170,19 @@ func (s *Snell) Start() error {
 	// 写入PID文件
 	pid := cmd.Process.Pid
 	if err := os.WriteFile(s.pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		logger.LogError(err, "写入PID文件失败", logrus.Fields{
+		logging.LogError(err, "写入PID文件失败", logrus.Fields{
 			"pid":      pid,
 			"pid_file": s.pidFile,
 		})
 	}
 
 	duration := time.Since(startTime)
-	logger.LogPerformance("snell_start", duration, logrus.Fields{
+	logging.LogPerformance("snell_start", duration, logrus.Fields{
 		"pid": pid,
 	})
 
 	// 记录状态变更
-	logger.LogStateChange("snell", "stopped", "running", "正常启动")
+	logging.LogStateChange("snell", "stopped", "running", map[string]interface{}{"reason": "正常启动"})
 
 	log.WithFields(logrus.Fields{
 		"pid":         pid,
@@ -166,7 +195,7 @@ func (s *Snell) Start() error {
 // Stop 停止snell
 func (s *Snell) Stop() error {
 	startTime := time.Now()
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
 
 	log.Debug("停止snell服务")
 
@@ -177,7 +206,7 @@ func (s *Snell) Stop() error {
 			log.Debug("PID文件不存在，snell可能已停止")
 			return nil
 		}
-		logger.LogError(err, "读取PID文件失败", logrus.Fields{
+		logging.LogError(err, "读取PID文件失败", logrus.Fields{
 			"pid_file": s.pidFile,
 		})
 		return fmt.Errorf("读取PID文件失败: %w", err)
@@ -185,7 +214,7 @@ func (s *Snell) Stop() error {
 
 	pid, err := strconv.Atoi(string(pidData))
 	if err != nil {
-		logger.LogError(err, "解析PID失败", logrus.Fields{
+		logging.LogError(err, "解析PID失败", logrus.Fields{
 			"pid_data": string(pidData),
 		})
 		return fmt.Errorf("解析PID失败: %w", err)
@@ -193,7 +222,7 @@ func (s *Snell) Stop() error {
 
 	// 发送TERM信号
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		logger.LogError(err, "停止进程失败", logrus.Fields{
+		logging.LogError(err, "停止进程失败", logrus.Fields{
 			"pid": pid,
 		})
 		return fmt.Errorf("停止进程失败: %w", err)
@@ -203,12 +232,12 @@ func (s *Snell) Stop() error {
 	os.Remove(s.pidFile)
 
 	duration := time.Since(startTime)
-	logger.LogPerformance("snell_stop", duration, logrus.Fields{
+	logging.LogPerformance("snell_stop", duration, logrus.Fields{
 		"pid": pid,
 	})
 
 	// 记录状态变更
-	logger.LogStateChange("snell", "running", "stopped", "正常停止")
+	logging.LogStateChange("snell", "running", "stopped", map[string]interface{}{"reason": "正常停止"})
 
 	log.WithFields(logrus.Fields{
 		"pid":         pid,
@@ -229,7 +258,7 @@ func (s *Snell) Restart() error {
 
 // Status 获取snell状态
 func (s *Snell) Status() (string, error) {
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
 
 	if !s.IsInstalled() {
 		log.Debug("snell未安装")
@@ -251,7 +280,7 @@ func (s *Snell) IsInstalled() bool {
 	_, err := os.Stat(binaryPath)
 	installed := err == nil
 
-	logger.GetProxyLogger().WithFields(logrus.Fields{
+	logging.GetProxyLogger().WithFields(logrus.Fields{
 		"proxy_type":  "snell",
 		"binary_path": binaryPath,
 		"installed":   installed,
@@ -262,7 +291,7 @@ func (s *Snell) IsInstalled() bool {
 
 // IsRunning 检查是否正在运行
 func (s *Snell) IsRunning() bool {
-	log := logger.GetProxyLogger().WithField("proxy_type", "snell")
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
 
 	// 检查PID文件
 	pidData, err := os.ReadFile(s.pidFile)

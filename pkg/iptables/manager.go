@@ -13,7 +13,7 @@ import (
 
 	"github.com/moooyo/nspass-proto/generated/model"
 	"github.com/nspass/nspass-agent/pkg/config"
-	"github.com/nspass/nspass-agent/pkg/logger"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
 
@@ -59,7 +59,7 @@ func NewManager(cfg config.IPTablesConfig) ManagerInterface {
 	// 初始化模板管理器
 	templateManager, err := NewTemplateManager()
 	if err != nil {
-		logger.LogError(err, "初始化模板管理器失败", nil)
+		logging.LogError(err, "初始化模板管理器失败", nil)
 		// 可以继续使用，但会回退到原来的字符串拼接方式
 		templateManager = nil
 	}
@@ -74,17 +74,17 @@ func NewManager(cfg config.IPTablesConfig) ManagerInterface {
 
 	// 确保目录存在
 	if err := os.MkdirAll(rulesDir, 0755); err != nil {
-		logger.LogError(err, "创建规则目录失败", logrus.Fields{
+		logging.LogError(err, "创建规则目录失败", logrus.Fields{
 			"rules_dir": rulesDir,
 		})
 	}
 	if err := os.MkdirAll(manager.backupDir, 0755); err != nil {
-		logger.LogError(err, "创建备份目录失败", logrus.Fields{
+		logging.LogError(err, "创建备份目录失败", logrus.Fields{
 			"backup_dir": manager.backupDir,
 		})
 	}
 
-	logger.LogStartup("iptables-manager", "1.0", map[string]interface{}{
+	logging.LogStartup("iptables-manager", "1.0", map[string]interface{}{
 		"enabled":      cfg.Enable,
 		"chain_prefix": cfg.ChainPrefix,
 		"rules_file":   manager.rulesFilePath,
@@ -97,7 +97,7 @@ func NewManager(cfg config.IPTablesConfig) ManagerInterface {
 // UpdateRulesFromProto 使用proto配置更新iptables规则
 func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 	if !m.config.Enable {
-		logger.GetIPTablesLogger().Info("iptables管理已禁用，跳过规则更新")
+		logging.GetIPTablesLogger().Info("iptables管理已禁用，跳过规则更新")
 		return nil
 	}
 
@@ -105,13 +105,13 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 	defer m.mu.Unlock()
 
 	startTime := time.Now()
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 
 	log.WithField("config_count", len(configs)).Info("使用proto配置更新iptables规则")
 
 	// 1. 备份当前规则
 	if err := m.backupCurrentRules(); err != nil {
-		logger.LogError(err, "备份当前规则失败", nil)
+		logging.LogError(err, "备份当前规则失败", nil)
 	}
 
 	// 2. 转换proto配置为内部规则格式
@@ -167,16 +167,16 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 	// 5. 应用新规则
 	if err := m.applyRules(newRulesContent); err != nil {
 		// 应用失败，尝试恢复
-		logger.LogError(err, "应用新规则失败，尝试恢复", nil)
+		logging.LogError(err, "应用新规则失败，尝试恢复", nil)
 		if restoreErr := m.restoreFromBackup(); restoreErr != nil {
-			logger.LogError(restoreErr, "恢复规则失败", nil)
+			logging.LogError(restoreErr, "恢复规则失败", nil)
 		}
 		return fmt.Errorf("应用规则失败: %w", err)
 	}
 
 	// 6. 保存规则文件
 	if err := m.saveRulesFile(newRulesContent); err != nil {
-		logger.LogError(err, "保存规则文件失败", nil)
+		logging.LogError(err, "保存规则文件失败", nil)
 	}
 
 	// 7. 更新内存状态
@@ -187,7 +187,7 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 	duration := time.Since(startTime)
 
 	// 记录性能指标
-	logger.LogPerformance("iptables_rules_update_from_proto", duration, logrus.Fields{
+	logging.LogPerformance("iptables_rules_update_from_proto", duration, logrus.Fields{
 		"configs_processed": len(configs),
 		"configs_enabled":   enabledCount,
 		"old_rules":         oldRulesCount,
@@ -205,7 +205,7 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 
 // getCurrentRulesContent 获取当前的iptables规则内容
 func (m *Manager) getCurrentRulesContent() (string, error) {
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 	log.Debug("获取当前系统iptables规则")
 
 	cmd := exec.Command("iptables-save")
@@ -221,7 +221,7 @@ func (m *Manager) getCurrentRulesContent() (string, error) {
 
 // generateRulesContent 生成新的规则文件内容
 func (m *Manager) generateRulesContent(currentContent string, newRules map[string]*Rule) (string, error) {
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 	log.WithField("new_rules_count", len(newRules)).Info("开始生成新的规则文件内容")
 
 	// 解析当前规则
@@ -318,7 +318,7 @@ func (m *Manager) parseIPTablesContent(content string) (map[string]*IPTablesTabl
 
 // removeOldManagedRules 移除旧的管理规则
 func (m *Manager) removeOldManagedRules(tables map[string]*IPTablesTable) int {
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 	removedCount := 0
 	removedChains := 0
 
@@ -361,7 +361,7 @@ func (m *Manager) removeOldManagedRules(tables map[string]*IPTablesTable) int {
 
 // addNewManagedRules 添加新的管理规则
 func (m *Manager) addNewManagedRules(tables map[string]*IPTablesTable, newRules map[string]*Rule) int {
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 	addedCount := 0
 	addedChains := 0
 
@@ -500,7 +500,7 @@ func (m *Manager) generateIPTablesContent(tables map[string]*IPTablesTable) (str
 
 // applyRules 应用新规则
 func (m *Manager) applyRules(content string) error {
-	log := logger.GetIPTablesLogger()
+	log := logging.GetIPTablesLogger()
 	log.Info("开始应用新的iptables规则")
 
 	// 创建临时文件
@@ -543,7 +543,7 @@ func (m *Manager) backupCurrentRules() error {
 		return fmt.Errorf("写入备份文件失败: %w", err)
 	}
 
-	logger.GetIPTablesLogger().WithField("backup_file", backupFile).Info("当前规则备份完成")
+	logging.GetIPTablesLogger().WithField("backup_file", backupFile).Info("当前规则备份完成")
 	return nil
 }
 
@@ -553,7 +553,7 @@ func (m *Manager) saveRulesFile(content string) error {
 		return fmt.Errorf("保存规则文件失败: %w", err)
 	}
 
-	logger.GetIPTablesLogger().WithField("rules_file", m.rulesFilePath).Info("规则文件保存完成")
+	logging.GetIPTablesLogger().WithField("rules_file", m.rulesFilePath).Info("规则文件保存完成")
 	return nil
 }
 
@@ -589,7 +589,7 @@ func (m *Manager) restoreFromBackup() error {
 		return fmt.Errorf("恢复备份失败: %w, 输出: %s", err, string(output))
 	}
 
-	logger.GetIPTablesLogger().WithField("backup_file", latestBackup).Info("从备份恢复成功")
+	logging.GetIPTablesLogger().WithField("backup_file", latestBackup).Info("从备份恢复成功")
 	return nil
 }
 
