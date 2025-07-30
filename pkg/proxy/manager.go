@@ -353,6 +353,15 @@ func (em *Manager) createProxyInstance(config *model.EgressItem) error {
 		Info("代理实例创建成功")
 
 	em.emitEvent("created", fmt.Sprintf("%d", config.Id), InstanceStateStopped, nil)
+
+	// 自动启动代理
+	if err := em.startProxyInstance(instance); err != nil {
+		em.logger.WithError(err).WithField("proxy_id", fmt.Sprintf("%d", config.Id)).
+			Error("自动启动代理失败")
+		// 不返回错误，因为代理已经创建和配置成功，只是启动失败
+		// 监控器会检测到这个问题并尝试重启
+	}
+
 	return nil
 }
 
@@ -360,6 +369,13 @@ func (em *Manager) createProxyInstance(config *model.EgressItem) error {
 func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.EgressItem) error {
 	// 检查配置是否有变化
 	if em.configEquals(instance.Config, config) {
+		// 配置没有变化，但确保代理正在运行
+		if instance.GetState() != InstanceStateRunning {
+			if err := em.startProxyInstance(instance); err != nil {
+				em.logger.WithError(err).WithField("proxy_id", fmt.Sprintf("%d", config.Id)).
+					Error("启动现有代理失败")
+			}
+		}
 		return nil
 	}
 
@@ -380,6 +396,15 @@ func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.Eg
 	}
 
 	em.emitEvent("updated", fmt.Sprintf("%d", config.Id), instance.GetState(), nil)
+
+	// 重新启动代理
+	if err := em.startProxyInstance(instance); err != nil {
+		em.logger.WithError(err).WithField("proxy_id", fmt.Sprintf("%d", config.Id)).
+			Error("重新启动代理失败")
+		// 不返回错误，因为代理已经重新配置成功，只是启动失败
+		// 监控器会检测到这个问题并尝试重启
+	}
+
 	return nil
 }
 

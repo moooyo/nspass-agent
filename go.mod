@@ -12,6 +12,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.7.0
 	google.golang.org/protobuf v1.36.6
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -35,7 +36,6 @@ require (
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 // 使用本地生成的protobuf代码，而不是从远程拉取
