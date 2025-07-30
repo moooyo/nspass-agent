@@ -1093,7 +1093,7 @@ iptables:
 logger:
   level: "info"
   format: "json"
-  output: "both"
+  output: "file"
   file: "/var/log/nspass/agent.log"
   max_size: 100
   max_backups: 5

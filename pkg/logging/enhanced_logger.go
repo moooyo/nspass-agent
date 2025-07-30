@@ -42,8 +42,8 @@ func DefaultConfig() Config {
 
 var (
 	// 全局logger实例
-	globalLogger     *logrus.Logger
-	globalLoggerOnce sync.Once
+	globalLogger *logrus.Logger
+	globalMutex  sync.RWMutex
 	// 组件专用logger映射
 	componentLoggers = make(map[string]interfaces.Logger)
 	componentMutex   sync.RWMutex
@@ -318,8 +318,6 @@ func (s *StructuredLogger) LogResponse(statusCode int, responseSize int64, durat
 	}).Info("HTTP响应")
 }
 
-// 全局函数 - 替代旧的logger包功能
-
 // ensureLogDirectory 确保日志目录存在
 func ensureLogDirectory(logFile string) error {
 	logDir := filepath.Dir(logFile)
@@ -369,55 +367,74 @@ func RotateLogs() error {
 
 // Initialize 初始化全局日志器
 func Initialize(config Config) error {
-	var initErr error
-	globalLoggerOnce.Do(func() {
-		// 创建新的logger实例
-		logger := logrus.New()
+	globalMutex.Lock()
+	defer globalMutex.Unlock()
 
-		// 设置日志级别
-		level, err := logrus.ParseLevel(config.Level)
-		if err != nil {
-			initErr = fmt.Errorf("无效的日志级别 '%s': %w", config.Level, err)
-			return
-		}
-		logger.SetLevel(level)
+	// 创建新的logger实例
+	logger := logrus.New()
 
-		// 设置日志格式
-		switch strings.ToLower(config.Format) {
-		case "json":
-			logger.SetFormatter(&logrus.JSONFormatter{
-				TimestampFormat: time.RFC3339,
-			})
-		case "text":
-			logger.SetFormatter(&logrus.TextFormatter{
-				TimestampFormat: time.RFC3339,
-				FullTimestamp:   true,
-			})
-		default:
-			initErr = fmt.Errorf("不支持的日志格式 '%s'", config.Format)
-			return
-		}
+	// 设置日志级别
+	level, err := logrus.ParseLevel(config.Level)
+	if err != nil {
+		return fmt.Errorf("无效的日志级别 '%s': %w", config.Level, err)
+	}
+	logger.SetLevel(level)
 
-		// 设置日志输出 - 只支持文件输出
-		fileWriter, err := createLogWriter(config)
-		if err != nil {
-			initErr = fmt.Errorf("创建日志文件写入器失败: %w", err)
-			return
-		}
-		logger.SetOutput(fileWriter)
+	// 设置日志格式
+	switch strings.ToLower(config.Format) {
+	case "json":
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339,
+		})
+	case "text":
+		logger.SetFormatter(&logrus.TextFormatter{
+			TimestampFormat: time.RFC3339,
+			FullTimestamp:   true,
+		})
+	default:
+		return fmt.Errorf("不支持的日志格式 '%s'", config.Format)
+	}
 
-		globalLogger = logger
-	})
-	return initErr
+	// 设置日志输出 - 只支持文件输出
+	fileWriter, err := createLogWriter(config)
+	if err != nil {
+		return fmt.Errorf("创建日志文件写入器失败: %w", err)
+	}
+	logger.SetOutput(fileWriter)
+
+	// 如果重新初始化，需要清空组件logger缓存
+	if globalLogger != nil {
+		componentMutex.Lock()
+		componentLoggers = make(map[string]interfaces.Logger)
+		componentMutex.Unlock()
+	}
+
+	globalLogger = logger
+	return nil
 }
 
 // GetLogger 获取全局logger实例
 func GetLogger() interfaces.Logger {
+	globalMutex.RLock()
+	defer globalMutex.RUnlock()
+
 	if globalLogger == nil {
-		// 如果未初始化，使用默认配置
+		// 如果未初始化，使用默认配置进行初始化
+		globalMutex.RUnlock() // 释放读锁
 		config := DefaultConfig()
-		Initialize(config)
+		if err := Initialize(config); err != nil {
+			// 如果初始化失败，创建一个基本的logger输出到stderr
+			logger := logrus.New()
+			logger.SetOutput(os.Stderr)
+			logger.SetLevel(logrus.InfoLevel)
+			logger.SetFormatter(&logrus.JSONFormatter{})
+			globalMutex.Lock()
+			globalLogger = logger
+			globalMutex.Unlock()
+		}
+		globalMutex.RLock() // 重新获取读锁
 	}
+
 	entry := globalLogger.WithField("component", "global")
 	return NewEnhancedLogger(entry, "global")
 }
@@ -439,12 +456,28 @@ func GetComponentLogger(component string) interfaces.Logger {
 		return logger
 	}
 
+	// 确保全局logger已初始化
+	globalMutex.RLock()
 	if globalLogger == nil {
+		globalMutex.RUnlock()
+		// 使用默认配置初始化
 		config := DefaultConfig()
-		Initialize(config)
+		if err := Initialize(config); err != nil {
+			// 如果初始化失败，创建一个基本的logger
+			logger := logrus.New()
+			logger.SetOutput(os.Stderr)
+			logger.SetLevel(logrus.InfoLevel)
+			logger.SetFormatter(&logrus.JSONFormatter{})
+			globalMutex.Lock()
+			globalLogger = logger
+			globalMutex.Unlock()
+		}
+		globalMutex.RLock()
 	}
 
 	entry := globalLogger.WithField("component", component)
+	globalMutex.RUnlock()
+
 	logger := NewEnhancedLogger(entry, component)
 	componentLoggers[component] = logger
 	return logger
