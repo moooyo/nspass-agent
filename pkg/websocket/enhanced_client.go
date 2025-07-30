@@ -32,6 +32,9 @@ type EnhancedClient struct {
 	// 状态
 	running bool
 	mu      sync.RWMutex
+
+	// IP信息上报相关
+	ipReportTicker *time.Ticker
 }
 
 // NewEnhancedClient 创建增强的WebSocket客户端
@@ -140,6 +143,9 @@ func (c *EnhancedClient) Stop() error {
 	if err := c.messageProcessor.Stop(); err != nil {
 		c.logger.WithError(err).Error("停止消息处理器失败")
 	}
+
+	// 停止IP信息上报
+	c.stopIPReporting()
 
 	// 等待所有goroutine结束
 	c.wg.Wait()
@@ -273,6 +279,16 @@ func (c *EnhancedClient) SendMetrics(metricsType model.MetricsType) error {
 // onConnected 连接建立回调
 func (c *EnhancedClient) onConnected() {
 	c.logger.Info("WebSocket连接已建立")
+
+	// 立即发送IP信息
+	go func() {
+		if err := c.messageProcessor.SendIPInfo(); err != nil {
+			c.logger.WithError(err).Error("发送初始IP信息失败")
+		}
+	}()
+
+	// 启动定时IP信息上报（每30分钟）
+	c.startIPReporting()
 }
 
 // onDisconnected 连接断开回调
@@ -282,6 +298,9 @@ func (c *EnhancedClient) onDisconnected(err error) {
 	} else {
 		c.logger.Info("WebSocket连接正常断开")
 	}
+
+	// 停止IP信息上报
+	c.stopIPReporting()
 }
 
 // onMessage 消息接收回调
@@ -292,6 +311,59 @@ func (c *EnhancedClient) onMessage(data []byte) {
 // onError 错误回调
 func (c *EnhancedClient) onError(err error) {
 	c.logger.WithError(err).Error("WebSocket连接错误")
+}
+
+// startIPReporting 启动IP信息定时上报
+func (c *EnhancedClient) startIPReporting() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 如果已经有ticker在运行，先停止它
+	if c.ipReportTicker != nil {
+		c.ipReportTicker.Stop()
+	}
+
+	// 创建新的ticker，每30分钟上报一次
+	c.ipReportTicker = time.NewTicker(30 * time.Minute)
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer func() {
+			c.mu.Lock()
+			if c.ipReportTicker != nil {
+				c.ipReportTicker.Stop()
+				c.ipReportTicker = nil
+			}
+			c.mu.Unlock()
+		}()
+
+		for {
+			select {
+			case <-c.ctx.Done():
+				return
+			case <-c.ipReportTicker.C:
+				c.logger.Debug("定时上报IP信息")
+				if err := c.messageProcessor.SendIPInfo(); err != nil {
+					c.logger.WithError(err).Error("定时上报IP信息失败")
+				}
+			}
+		}
+	}()
+
+	c.logger.Info("IP信息定时上报已启动（每30分钟）")
+}
+
+// stopIPReporting 停止IP信息定时上报
+func (c *EnhancedClient) stopIPReporting() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.ipReportTicker != nil {
+		c.ipReportTicker.Stop()
+		c.ipReportTicker = nil
+		c.logger.Info("IP信息定时上报已停止")
+	}
 }
 
 // GetStatus 获取客户端状态

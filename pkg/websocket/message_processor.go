@@ -16,6 +16,7 @@ import (
 	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
+	"github.com/nspass/nspass-agent/pkg/utils"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -793,5 +794,56 @@ func (mp *MessageProcessor) downloadScript(downloadURL, scriptPath string) error
 	}
 
 	mp.logger.Info("升级脚本下载完成")
+	return nil
+}
+
+// SendIPInfo 发送IP信息到服务器
+func (mp *MessageProcessor) SendIPInfo() error {
+	mp.logger.Info("开始收集和发送IP信息")
+
+	// 创建IP信息收集器
+	collector := utils.NewIPInfoCollector()
+
+	// 获取IP信息
+	ctx, cancel := context.WithTimeout(mp.ctx, 30*time.Second)
+	defer cancel()
+
+	ipInfo, err := collector.GetIPInfo(ctx)
+	if err != nil {
+		mp.logger.WithError(err).Error("获取IP信息失败")
+		return err
+	}
+
+	mp.logger.WithFields(map[string]interface{}{
+		"ipv4_address":   ipInfo.IPv4Address,
+		"ipv6_addresses": ipInfo.IPv6Addresses,
+		"ipv6_count":     len(ipInfo.IPv6Addresses),
+	}).Info("IP信息收集完成")
+
+	// 创建protobuf IpInfo消息
+	protoIpInfo := &model.IpInfo{
+		Ipv4Address: ipInfo.IPv4Address,
+		Ipv6Address: ipInfo.IPv6Addresses,
+	}
+
+	// 序列化为Any类型
+	payload, err := anypb.New(protoIpInfo)
+	if err != nil {
+		mp.logger.WithError(err).Error("序列化IP信息失败")
+		return err
+	}
+
+	// 创建WebSocket消息
+	message := &model.WebSocketMessage{
+		MessageId:   fmt.Sprintf("ipinfo_%d", time.Now().UnixNano()),
+		MessageType: model.WebSocketMessageType_WEBSOCKET_MESSAGE_AGENT_TYPE_IPINFO,
+		Timestamp:   timestamppb.Now(),
+		Payload:     payload,
+	}
+
+	// 发送消息
+	mp.SendMessage(message)
+	mp.logger.Info("IP信息已发送到服务器")
+
 	return nil
 }
