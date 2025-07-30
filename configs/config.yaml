@@ -41,7 +41,6 @@ iptables:
 logger:
   level: "info"               # debug, info, warn, error
   format: "json"              # json, text
-  output: "both"              # stdout, file, both
   file: "/var/log/nspass/agent.log"
   max_size: 100               # 单个日志文件最大大小（MB）
   max_backups: 5              # 保留的日志文件数量

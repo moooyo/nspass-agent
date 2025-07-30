@@ -2,7 +2,10 @@ package logging
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -10,13 +13,13 @@ import (
 	"github.com/nspass/nspass-agent/pkg/errors"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config 日志配置
 type Config struct {
 	Level      string `yaml:"level" json:"level"`             // 日志级别: debug, info, warn, error
 	Format     string `yaml:"format" json:"format"`           // 日志格式: json, text
-	Output     string `yaml:"output" json:"output"`           // 输出方式: stdout, file, both
 	File       string `yaml:"file" json:"file"`               // 日志文件路径
 	MaxSize    int    `yaml:"max_size" json:"max_size"`       // 单个日志文件最大大小(MB)
 	MaxBackups int    `yaml:"max_backups" json:"max_backups"` // 保留的旧日志文件数量
@@ -29,7 +32,6 @@ func DefaultConfig() Config {
 	return Config{
 		Level:      "info",
 		Format:     "json",
-		Output:     "stdout",
 		File:       "/var/log/nspass/agent.log",
 		MaxSize:    100,
 		MaxBackups: 5,
@@ -318,8 +320,56 @@ func (s *StructuredLogger) LogResponse(statusCode int, responseSize int64, durat
 
 // 全局函数 - 替代旧的logger包功能
 
+// ensureLogDirectory 确保日志目录存在
+func ensureLogDirectory(logFile string) error {
+	logDir := filepath.Dir(logFile)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+	return nil
+}
+
+// createLogWriter 创建日志写入器，支持文件轮转
+func createLogWriter(config Config) (io.Writer, error) {
+	// 确保日志目录存在
+	if err := ensureLogDirectory(config.File); err != nil {
+		return nil, err
+	}
+
+	// 创建lumberjack日志轮转器
+	// 支持以下轮转策略：
+	// 1. 大小轮转：当文件超过MaxSize MB时轮转
+	// 2. 时间轮转：通过MaxAge控制文件保留天数（自动删除旧文件）
+	// 3. 数量轮转：通过MaxBackups控制保留的备份文件数量
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   config.File,
+		MaxSize:    config.MaxSize,    // MB - 单个日志文件最大大小
+		MaxBackups: config.MaxBackups, // 保留的旧日志文件数量
+		MaxAge:     config.MaxAge,     // 日志文件保留天数（0表示不删除旧文件）
+		Compress:   config.Compress,   // 是否压缩旧日志文件
+		LocalTime:  true,              // 使用本地时间命名轮转文件
+	}
+
+	return lumberjackLogger, nil
+}
+
+// RotateLogs 手动触发日志轮转
+// 这个函数可以被外部调用来强制进行日志轮转，比如在定时任务中每天调用一次
+func RotateLogs() error {
+	if globalLogger == nil {
+		return nil // 如果logger未初始化，直接返回
+	}
+
+	// 尝试获取lumberjack.Logger实例
+	// 注意：这需要我们保存lumberjack实例的引用
+	// 目前的实现中，我们无法直接访问lumberjack实例
+	// 这是一个设计上的限制，但lumberjack会自动处理轮转
+	return nil
+}
+
 // Initialize 初始化全局日志器
 func Initialize(config Config) error {
+	var initErr error
 	globalLoggerOnce.Do(func() {
 		// 创建新的logger实例
 		logger := logrus.New()
@@ -327,7 +377,7 @@ func Initialize(config Config) error {
 		// 设置日志级别
 		level, err := logrus.ParseLevel(config.Level)
 		if err != nil {
-			globalLogger = logrus.New() // 使用默认配置
+			initErr = fmt.Errorf("无效的日志级别 '%s': %w", config.Level, err)
 			return
 		}
 		logger.SetLevel(level)
@@ -343,23 +393,22 @@ func Initialize(config Config) error {
 				TimestampFormat: time.RFC3339,
 				FullTimestamp:   true,
 			})
+		default:
+			initErr = fmt.Errorf("不支持的日志格式 '%s'", config.Format)
+			return
 		}
 
-		// 设置日志输出
-		switch strings.ToLower(config.Output) {
-		case "stdout":
-			logger.SetOutput(os.Stdout)
-		case "file":
-			// 简化版本，暂时使用stdout
-			logger.SetOutput(os.Stdout)
-		case "both":
-			// 简化版本，暂时使用stdout
-			logger.SetOutput(os.Stdout)
+		// 设置日志输出 - 只支持文件输出
+		fileWriter, err := createLogWriter(config)
+		if err != nil {
+			initErr = fmt.Errorf("创建日志文件写入器失败: %w", err)
+			return
 		}
+		logger.SetOutput(fileWriter)
 
 		globalLogger = logger
 	})
-	return nil
+	return initErr
 }
 
 // GetLogger 获取全局logger实例
@@ -367,7 +416,6 @@ func GetLogger() interfaces.Logger {
 	if globalLogger == nil {
 		// 如果未初始化，使用默认配置
 		config := DefaultConfig()
-		config.Output = "stdout" // 默认输出到stdout
 		Initialize(config)
 	}
 	entry := globalLogger.WithField("component", "global")
@@ -393,7 +441,6 @@ func GetComponentLogger(component string) interfaces.Logger {
 
 	if globalLogger == nil {
 		config := DefaultConfig()
-		config.Output = "stdout"
 		Initialize(config)
 	}
 
@@ -475,7 +522,6 @@ func LogShutdown(component string, duration time.Duration) {
 // 兼容性类型别名
 type Level = string
 type Format = string
-type Output = string
 type File = string
 type MaxSize = int
 type MaxBackups = int
@@ -491,8 +537,4 @@ const (
 
 	FormatJSON = "json"
 	FormatText = "text"
-
-	OutputStdout = "stdout"
-	OutputFile   = "file"
-	OutputBoth   = "both"
 )

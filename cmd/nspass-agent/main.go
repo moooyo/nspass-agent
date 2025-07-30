@@ -52,7 +52,8 @@ func runAgent(cmd *cobra.Command, args []string) {
 	// 先使用基础日志配置，稍后会被配置文件覆盖
 	basicConfig := logging.DefaultConfig()
 	basicConfig.Level = logLevel
-	basicConfig.Output = "stdout"
+	// 使用临时日志文件进行初始化
+	basicConfig.File = "/tmp/nspass-agent-init.log"
 	if err := logging.Initialize(basicConfig); err != nil {
 		logrus.Fatal("初始化基础日志失败: ", err)
 	}

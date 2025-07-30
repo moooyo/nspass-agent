@@ -83,13 +83,15 @@ type StandardLogger struct {
 
 // NewStandardLogger 创建标准化日志记录器
 func NewStandardLogger(component string) *StandardLogger {
-	// 获取现有的logrus实例
-	logger := logrus.New()
-	logger.SetLevel(logrus.InfoLevel)
-	logger.SetFormatter(&logrus.JSONFormatter{})
+	// 使用全局配置的logger实例，而不是创建新的实例
+	if globalLogger == nil {
+		// 如果全局logger未初始化，使用默认配置初始化
+		config := DefaultConfig()
+		Initialize(config)
+	}
 
 	return &StandardLogger{
-		logger:    logger,
+		logger:    globalLogger,
 		component: component,
 	}
 }

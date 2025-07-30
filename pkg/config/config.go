@@ -274,9 +274,6 @@ func setLoggerDefaults(logger *logging.Config, logLevel string, defaults Default
 	if logger.Format == "" {
 		logger.Format = "json"
 	}
-	if logger.Output == "" {
-		logger.Output = "stdout"
-	}
 	if logger.File == "" {
 		logger.File = "/var/log/nspass/agent.log"
 	}

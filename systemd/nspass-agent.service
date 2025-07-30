@@ -27,10 +27,9 @@ LimitNPROC=65536
 # 环境变量
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 日志配置
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=nspass-agent
+# 日志配置 - 使用应用程序自己的文件日志
+StandardOutput=null
+StandardError=null
 
 [Install]
 WantedBy=multi-user.target 

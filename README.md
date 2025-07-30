@@ -191,10 +191,10 @@ sudo systemctl restart nspass-agent
 sudo systemctl stop nspass-agent
 
 # 查看日志
-sudo journalctl -u nspass-agent -f
-
-# 查看详细日志
 sudo tail -f /var/log/nspass/agent.log
+
+# 查看历史日志
+sudo less /var/log/nspass/agent.log
 ```
 
 ### 命令行使用
