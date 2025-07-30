@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/errors"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
@@ -42,6 +43,7 @@ func NewEnhancedClient(
 	metricsCollector interfaces.MetricsCollector,
 	proxyManager interfaces.ProxyManager,
 	iptablesManager interfaces.IPTablesManager,
+	certManager *cert.Manager,
 ) *EnhancedClient {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -58,7 +60,7 @@ func NewEnhancedClient(
 	client.connectionManager = NewConnectionManager(cfg, agentID, token, logger)
 
 	// 创建消息处理器
-	client.messageProcessor = NewMessageProcessor(agentID, cfg, logger, taskHandler, metricsCollector, proxyManager, iptablesManager)
+	client.messageProcessor = NewMessageProcessor(agentID, cfg, logger, taskHandler, metricsCollector, proxyManager, iptablesManager, certManager)
 
 	// 设置连接管理器回调
 	client.setupConnectionCallbacks()

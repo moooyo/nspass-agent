@@ -17,6 +17,7 @@ type ProxyManager interface {
 	StopProxy(proxyID string) error
 	RestartProxy(proxyID string) error
 	RestartAll() error
+	RestartProxyForDomain(domain string) error
 
 	// 监控相关
 	StartMonitor() error

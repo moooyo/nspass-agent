@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
 	"google.golang.org/protobuf/proto"
@@ -178,6 +179,7 @@ type MessageProcessor struct {
 	metricsCollector interfaces.MetricsCollector
 	proxyManager     interfaces.ProxyManager    // 代理管理器
 	iptablesManager  interfaces.IPTablesManager // IPTables管理器
+	certManager      *cert.Manager              // 证书管理器
 
 	// 消息队列
 	incomingMessages chan []byte
@@ -208,6 +210,7 @@ func NewMessageProcessor(
 	metricsCollector interfaces.MetricsCollector,
 	proxyManager interfaces.ProxyManager,
 	iptablesManager interfaces.IPTablesManager,
+	certManager *cert.Manager,
 ) *MessageProcessor {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -219,6 +222,7 @@ func NewMessageProcessor(
 		metricsCollector: metricsCollector,
 		proxyManager:     proxyManager,
 		iptablesManager:  iptablesManager,
+		certManager:      certManager,
 		incomingMessages: make(chan []byte, 100),
 		outgoingMessages: make(chan *model.WebSocketMessage, 100),
 		ctx:              ctx,
@@ -411,7 +415,19 @@ func (mp *MessageProcessor) handleEgressConfig(message *model.WebSocketMessage) 
 		return
 	}
 
-	mp.logger.WithField("egress_count", len(agentEgressConfigs.EgressItems)).Info("解析出口配置完成")
+	mp.logger.WithFields(map[string]interface{}{
+		"egress_count":         len(agentEgressConfigs.EgressItems),
+		"dns_configs":          len(agentEgressConfigs.DnsConfigs),
+		"dns_provider_configs": len(agentEgressConfigs.DnsProviderConfigs),
+	}).Info("解析出口配置完成")
+
+	// 处理DNS配置 - 更新全局DNS配置管理器
+	if len(agentEgressConfigs.DnsConfigs) > 0 || len(agentEgressConfigs.DnsProviderConfigs) > 0 {
+		mp.logger.Info("更新DNS提供商配置")
+		// 使用全局DNS配置管理器
+		dnsConfigMgr := cert.GetGlobalDNSConfigManager()
+		dnsConfigMgr.UpdateConfigs(agentEgressConfigs.DnsConfigs, agentEgressConfigs.DnsProviderConfigs)
+	}
 
 	// 使用配置解析器处理和验证配置
 	parser := &EgressConfigParser{}

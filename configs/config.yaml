@@ -69,3 +69,11 @@ upgrade:
   timeout: 600                                                                               # 升级超时时间（秒）
   verify_checksum: false                                                                     # 是否验证校验和
   backup_enabled: true                                                                       # 是否启用备份
+
+# 证书管理配置
+certificate:
+  enabled: true                                    # 是否启用证书管理
+  store_path: "/etc/nspass-agent/certs"           # 证书存储路径
+  use_staging: false                              # 是否使用Let's Encrypt测试环境
+  expiry_threshold: 7                             # 证书过期阈值（天）
+  check_interval: 24                              # 过期检查间隔（小时）

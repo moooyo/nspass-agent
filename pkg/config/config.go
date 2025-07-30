@@ -36,6 +36,9 @@ type DefaultValues struct {
 	UpgradeAgentScriptURL      string
 	UpgradeProxyScriptURL      string
 	UpgradeTimeout             int
+	CertStorePath              string
+	CertExpiryThreshold        int
+	CertCheckInterval          int
 }
 
 // GetDefaultValues 返回默认配置值
@@ -65,6 +68,9 @@ func GetDefaultValues() DefaultValues {
 		UpgradeAgentScriptURL:      "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/agent_upgrade.sh",
 		UpgradeProxyScriptURL:      "https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/proxy_upgrade.sh",
 		UpgradeTimeout:             600, // 10分钟
+		CertStorePath:              "/etc/nspass-agent/certs",
+		CertExpiryThreshold:        7,  // 7天
+		CertCheckInterval:          24, // 24小时
 	}
 }
 
@@ -77,6 +83,7 @@ type Config struct {
 	Logger         logging.Config  `yaml:"logger" json:"logger"`
 	WebSocket      WebSocketConfig `yaml:"websocket" json:"websocket"`             // WebSocket配置
 	Upgrade        UpgradeConfig   `yaml:"upgrade" json:"upgrade"`                 // 升级配置
+	Certificate    CertConfig      `yaml:"certificate" json:"certificate"`         // 证书管理配置
 	UpdateInterval int             `yaml:"update_interval" json:"update_interval"` // 秒
 	LogLevel       string          `yaml:"log_level" json:"log_level"`
 }
@@ -141,6 +148,16 @@ type UpgradeConfig struct {
 	BackupEnabled  bool   `yaml:"backup_enabled" json:"backup_enabled"`     // 是否启用备份
 }
 
+// CertConfig 证书管理配置
+type CertConfig struct {
+	Enabled         bool   `yaml:"enabled" json:"enabled"`                   // 是否启用证书管理
+	Email           string `yaml:"email" json:"email"`                       // ACME账户邮箱
+	StorePath       string `yaml:"store_path" json:"store_path"`             // 证书存储路径
+	UseStaging      bool   `yaml:"use_staging" json:"use_staging"`           // 是否使用Let's Encrypt测试环境
+	ExpiryThreshold int    `yaml:"expiry_threshold" json:"expiry_threshold"` // 证书过期阈值（天）
+	CheckInterval   int    `yaml:"check_interval" json:"check_interval"`     // 过期检查间隔（小时）
+}
+
 // LoadConfig 从文件加载配置
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -193,6 +210,9 @@ func setDefaults(config *Config) {
 
 	// 升级配置
 	setUpgradeDefaults(&config.Upgrade, defaults)
+
+	// 证书配置
+	setCertDefaults(&config.Certificate, defaults)
 }
 
 // setAPIDefaults 设置API配置默认值
@@ -417,4 +437,20 @@ func SaveConfig(config *Config, path string) error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+// setCertDefaults 设置证书配置默认值
+func setCertDefaults(cert *CertConfig, defaults DefaultValues) {
+	if cert.Email == "" {
+		cert.Email = ""
+	}
+	if cert.StorePath == "" {
+		cert.StorePath = defaults.CertStorePath
+	}
+	if cert.ExpiryThreshold == 0 {
+		cert.ExpiryThreshold = defaults.CertExpiryThreshold
+	}
+	if cert.CheckInterval == 0 {
+		cert.CheckInterval = defaults.CertCheckInterval
+	}
 }

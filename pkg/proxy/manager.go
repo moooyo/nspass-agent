@@ -2,14 +2,17 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/errors"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
+	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/nspass/nspass-agent/pkg/proxy/shadowsocks"
 	"github.com/nspass/nspass-agent/pkg/proxy/snell"
 	"github.com/nspass/nspass-agent/pkg/proxy/trojan"
@@ -117,9 +120,10 @@ func (pi *ProxyInstance) GetStatus() map[string]interface{} {
 
 // Manager 代理管理器
 type Manager struct {
-	config  config.ProxyConfig
-	logger  interfaces.Logger
-	monitor *ProxyMonitor
+	config      config.ProxyConfig
+	logger      interfaces.Logger
+	monitor     *ProxyMonitor
+	certManager *cert.Manager // 证书管理器
 
 	// 代理实例管理
 	instances map[string]*ProxyInstance
@@ -164,7 +168,9 @@ type ProxyFactory interface {
 }
 
 // DefaultProxyFactory 默认代理工厂
-type DefaultProxyFactory struct{}
+type DefaultProxyFactory struct {
+	certConfig *cert.Config
+}
 
 // CreateProxy 创建代理实例
 func (f *DefaultProxyFactory) CreateProxy(config *model.EgressItem) (ProxyInterface, error) {
@@ -174,7 +180,13 @@ func (f *DefaultProxyFactory) CreateProxy(config *model.EgressItem) (ProxyInterf
 		return shadowsocks.New(config), nil
 	case model.EgressMode_EGRESS_MODE_TROJAN:
 		// 使用现有的trojan包
-		return trojan.New(config), nil
+		trojanProxy := trojan.New(config)
+		// trojan必须有证书配置
+		if f.certConfig == nil {
+			return nil, fmt.Errorf("trojan代理必须配置证书管理器")
+		}
+		trojanProxy.SetCertConfig(f.certConfig)
+		return trojanProxy, nil
 	case model.EgressMode_EGRESS_MODE_SNELL:
 		// 使用现有的snell包
 		return snell.New(config), nil
@@ -194,14 +206,15 @@ func (f *DefaultProxyFactory) SupportedTypes() []model.EgressMode {
 }
 
 // NewManager 创建代理管理器
-func NewManager(cfg config.ProxyConfig, logger interfaces.Logger) *Manager {
+func NewManager(cfg config.ProxyConfig, logger interfaces.Logger, certConfig *cert.Config) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	manager := &Manager{
 		config:       cfg,
 		logger:       logger,
+		certManager:  nil, // 不再需要全局的certManager
 		instances:    make(map[string]*ProxyInstance),
-		proxyFactory: &DefaultProxyFactory{},
+		proxyFactory: &DefaultProxyFactory{certConfig: certConfig},
 		ctx:          ctx,
 		cancel:       cancel,
 		eventsChan:   make(chan ProxyEvent, 100),
@@ -633,4 +646,109 @@ func (em *Manager) Stop() error {
 	close(em.eventsChan)
 
 	return nil
+}
+
+// RestartProxyForDomain 重启使用指定域名证书的代理
+func (em *Manager) RestartProxyForDomain(domain string) error {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	var restartedProxies []string
+	var errors []error
+
+	// 遍历所有代理实例，找到使用该域名的代理
+	for egressID, instance := range em.instances {
+		// 检查代理配置中是否包含该域名
+		if em.proxyUsesDomain(instance, domain) {
+			em.logger.Info("重启使用域名证书的代理", logging.StandardFields{
+				Custom: map[string]interface{}{
+					"egress_id": egressID,
+					"domain":    domain,
+				},
+			})
+
+			// 重启代理
+			if err := em.stopProxyInstance(instance); err != nil {
+				errors = append(errors, fmt.Errorf("停止代理 %s 失败: %w", egressID, err))
+				continue
+			}
+
+			if err := em.startProxyInstance(instance); err != nil {
+				errors = append(errors, fmt.Errorf("启动代理 %s 失败: %w", egressID, err))
+				continue
+			}
+
+			restartedProxies = append(restartedProxies, egressID)
+		}
+	}
+
+	if len(errors) > 0 {
+		em.logger.Error("部分代理重启失败", logging.StandardFields{
+			Custom: map[string]interface{}{
+				"domain":            domain,
+				"restarted_proxies": restartedProxies,
+				"failed_count":      len(errors),
+			},
+		})
+		// 返回第一个错误
+		return errors[0]
+	}
+
+	em.logger.Info("域名相关代理重启完成", logging.StandardFields{
+		Custom: map[string]interface{}{
+			"domain":            domain,
+			"restarted_proxies": restartedProxies,
+		},
+	})
+
+	return nil
+}
+
+// proxyUsesDomain 检查代理是否使用指定域名
+func (em *Manager) proxyUsesDomain(instance *ProxyInstance, domain string) bool {
+	// 检查代理配置中是否包含指定域名
+	if instance.Config == nil {
+		return false
+	}
+
+	// 根据代理类型检查域名使用情况
+	switch instance.Config.EgressMode {
+	case model.EgressMode_EGRESS_MODE_TROJAN:
+		// 对于trojan代理，检查配置中的域名字段
+		return em.checkTrojanDomain(instance.Config, domain)
+	default:
+		// 其他代理类型暂不支持域名检查
+		return false
+	}
+}
+
+// checkTrojanDomain 检查trojan代理是否使用指定域名
+func (em *Manager) checkTrojanDomain(config *model.EgressItem, domain string) bool {
+	if config.EgressConfig == "" {
+		return false
+	}
+
+	// 解析trojan配置
+	var trojanConfig map[string]interface{}
+	if err := json.Unmarshal([]byte(config.EgressConfig), &trojanConfig); err != nil {
+		em.logger.Warn("解析trojan配置失败", logging.StandardFields{
+			Error: err,
+			Custom: map[string]interface{}{
+				"egress_id": config.EgressId,
+			},
+		})
+		return false
+	}
+
+	// 检查域名字段
+	if configDomain, ok := trojanConfig["domain"].(string); ok {
+		return configDomain == domain
+	}
+
+	// 检查SNI字段（可能也包含域名）
+	if sni, ok := trojanConfig["sni"].(string); ok {
+		return sni == domain
+	}
+
+	return false
 }

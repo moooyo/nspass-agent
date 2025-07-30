@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
-	"github.com/nspass/nspass-agent/pkg/config"
+	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/nspass/nspass-agent/pkg/process"
 	"github.com/sirupsen/logrus"
@@ -24,9 +24,10 @@ const (
 // Trojan trojan代理实现
 type Trojan struct {
 	egressItem     *model.EgressItem // 出口配置
-	config         config.ProxyConfig
 	configPath     string
 	processManager *process.Manager
+	certManager    *cert.Manager // 证书管理器
+	certConfig     *cert.Config  // 证书配置
 }
 
 // New 创建新的Trojan实例
@@ -40,6 +41,7 @@ func New(egressItem *model.EgressItem) *Trojan {
 		egressItem:     egressItem,
 		configPath:     configPath,
 		processManager: processManager,
+		certManager:    nil, // 将在Configure时创建
 	}
 
 	logging.LogStartup("trojan-proxy", "1.0", map[string]any{
@@ -48,6 +50,11 @@ func New(egressItem *model.EgressItem) *Trojan {
 	})
 
 	return t
+}
+
+// SetCertConfig 设置证书配置
+func (t *Trojan) SetCertConfig(certConfig *cert.Config) {
+	t.certConfig = certConfig
 }
 
 // Type 返回代理类型
@@ -61,6 +68,11 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 	log := logging.GetProxyLogger().WithField("proxy_type", "trojan")
 
 	log.WithField("config_path", t.configPath).Debug("开始配置trojan")
+
+	// 验证trojan配置的完整性
+	if err := t.validateTrojanConfig(cfg); err != nil {
+		return fmt.Errorf("trojan配置验证失败: %w", err)
+	}
 
 	// 确保配置目录存在
 	configDir := filepath.Dir(t.configPath)
@@ -98,21 +110,91 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 		return fmt.Errorf("密码不能为空")
 	}
 
+	// 处理TLS证书 - trojan必须有证书才能工作
+	var certPath, keyPath string
+
+	// 检查是否配置了DNS配置ID
+	if cfg.DnsConfigId == nil {
+		return fmt.Errorf("trojan代理必须配置dns_config_id以申请TLS证书")
+	}
+
+	// 检查是否有证书配置
+	if t.certConfig == nil {
+		return fmt.Errorf("trojan代理必须配置证书管理器以申请TLS证书")
+	}
+
+	dnsConfig, err := cert.GetGlobalDNSConfigManager().GetDNSConfig(*cfg.DnsConfigId)
+	if err != nil {
+		return fmt.Errorf("获取DNS配置失败: %w", err)
+	}
+
+	domain := dnsConfig.Domain
+
+	// 为这个trojan实例创建独立的证书管理器
+	if t.certManager == nil {
+		var err error
+		t.certManager, err = cert.NewManager(t.certConfig)
+		if err != nil {
+			log.WithError(err).Error("创建证书管理器失败")
+			return fmt.Errorf("创建证书管理器失败: %w", err)
+		}
+		log.WithField("domain", domain).Info("为trojan实例创建独立的证书管理器")
+	}
+
+	// 确保证书存在且有效
+	certInfo, err := t.certManager.EnsureCertificate(domain, *cfg.DnsConfigId)
+	if err != nil {
+		log.WithError(err).WithField("domain", domain).Error("获取TLS证书失败")
+		return fmt.Errorf("获取TLS证书失败: %w", err)
+	}
+
+	// trojan必须有证书
+	if certInfo == nil {
+		return fmt.Errorf("无法为域名 %s 获取TLS证书,trojan代理无法启动", domain)
+	}
+
+	certPath = certInfo.CertPath
+	keyPath = certInfo.KeyPath
+	log.WithFields(logrus.Fields{
+		"domain":     domain,
+		"cert_path":  certPath,
+		"key_path":   keyPath,
+		"expires_at": certInfo.ExpiresAt,
+	}).Info("使用TLS证书")
+
 	// 生成trojan服务端配置
+	sslConfig := map[string]any{
+		"verify":          true,
+		"verify_hostname": true,
+		"cipher":          "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384",
+		"cipher_tls13":    "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
+		"sni":             egressConfig["sni"],
+	}
+
+	// 验证证书路径（trojan必须有证书）
+	if certPath == "" || keyPath == "" {
+		return fmt.Errorf("trojan代理必须有有效的TLS证书和私钥文件")
+	}
+
+	// 验证证书文件是否存在
+	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+		return fmt.Errorf("证书文件不存在: %s", certPath)
+	}
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return fmt.Errorf("私钥文件不存在: %s", keyPath)
+	}
+
+	// 设置证书路径
+	sslConfig["cert"] = certPath
+	sslConfig["key"] = keyPath
+
 	config := map[string]any{
 		"run_type":   "server",                // 运行为服务端模式
 		"local_addr": "0.0.0.0",               // 监听外网地址
 		"local_port": *cfg.Port,               // 从通用字段获取监听端口
 		"password":   []string{*cfg.Password}, // 从通用字段获取
 		"log_level":  1,
-		"ssl": map[string]any{
-			"verify":          true,
-			"verify_hostname": true,
-			"cert":            "",
-			"cipher":          "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384",
-			"cipher_tls13":    "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
-			"sni":             egressConfig["sni"],
-		},
+		"ssl":        sslConfig,
 		"tcp": map[string]any{
 			"no_delay":       true,
 			"keep_alive":     true,
@@ -120,15 +202,6 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 			"fast_open":      false,
 			"fast_open_qlen": 20,
 		},
-	}
-
-	// 如果有自定义本地端口
-	if localPort, ok := egressConfig["local_port"]; ok {
-		config["local_port"] = localPort
-	}
-
-	if localAddr, ok := egressConfig["local_addr"]; ok {
-		config["local_addr"] = localAddr
 	}
 
 	// 写入配置文件
@@ -231,4 +304,54 @@ func (t *Trojan) IsInstalled() bool {
 // IsRunning 检查是否正在运行
 func (t *Trojan) IsRunning() bool {
 	return t.processManager.IsRunning()
+}
+
+// validateTrojanConfig 验证trojan配置的完整性
+func (t *Trojan) validateTrojanConfig(cfg *model.EgressItem) error {
+	// 检查基本字段
+	if cfg.EgressId == "" {
+		return fmt.Errorf("egress_id不能为空")
+	}
+
+	if cfg.Port == nil {
+		return fmt.Errorf("port不能为空")
+	}
+
+	if cfg.Password == nil || *cfg.Password == "" {
+		return fmt.Errorf("password不能为空")
+	}
+
+	// 解析egress配置
+	var egressConfig map[string]interface{}
+	if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
+		return fmt.Errorf("解析egress配置失败: %w", err)
+	}
+
+	// 检查domain字段
+	domain, ok := egressConfig["domain"].(string)
+	if !ok || domain == "" {
+		return fmt.Errorf("trojan配置必须包含domain字段")
+	}
+
+	// 检查SNI字段
+	sni, ok := egressConfig["sni"].(string)
+	if !ok || sni == "" {
+		return fmt.Errorf("trojan配置必须包含sni字段")
+	}
+
+	// 检查DNS配置ID（trojan必须有证书）
+	if cfg.DnsConfigId == nil {
+		return fmt.Errorf("trojan代理必须配置dns_config_id以申请TLS证书")
+	}
+
+	// 检查证书配置
+	if t.certConfig == nil {
+		return fmt.Errorf("trojan代理必须配置证书管理器")
+	}
+
+	if t.certConfig.Email == "" {
+		return fmt.Errorf("证书管理器必须配置有效的邮箱地址")
+	}
+
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/cert"
 	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/errors"
 	"github.com/nspass/nspass-agent/pkg/interfaces"
@@ -28,6 +29,8 @@ type EnhancedService struct {
 	wsClient         interfaces.WebSocketClient
 	taskHandler      interfaces.TaskHandler
 	metricsCollector interfaces.MetricsCollector
+	certManager      *cert.Manager
+	expiryChecker    *cert.ExpiryChecker
 
 	// 控制相关
 	ctx     context.Context
@@ -88,9 +91,37 @@ func NewEnhancedService(cfg *config.Config, serverID string) (*EnhancedService, 
 
 // initializeComponents 初始化组件
 func (s *EnhancedService) initializeComponents() error {
+	// 创建证书管理器配置
+	var certConfig *cert.Config
+	if s.config.Certificate.Enabled && s.config.Certificate.Email != "" {
+		// 使用配置文件中的证书设置
+		certConfig = &cert.Config{
+			StorePath:       s.config.Certificate.StorePath,
+			Email:           s.config.Certificate.Email,
+			ExpiryThreshold: time.Duration(s.config.Certificate.ExpiryThreshold) * 24 * time.Hour,
+			UseStaging:      s.config.Certificate.UseStaging,
+		}
+		s.logger.Info("证书管理已启用", logging.StandardFields{
+			Custom: map[string]interface{}{
+				"email":       s.config.Certificate.Email,
+				"store_path":  s.config.Certificate.StorePath,
+				"use_staging": s.config.Certificate.UseStaging,
+			},
+		})
+	} else {
+		// 证书管理未启用，trojan代理将无法工作
+		s.logger.Warn("证书管理未启用或邮箱未配置，trojan代理将无法工作", logging.StandardFields{
+			Custom: map[string]interface{}{
+				"enabled": s.config.Certificate.Enabled,
+				"email":   s.config.Certificate.Email,
+			},
+		})
+		certConfig = nil
+	}
+
 	// 创建代理管理器
 	proxyLogger := logging.GetComponentLogger("proxy-manager")
-	s.proxyManager = proxy.NewManager(s.config.Proxy, proxyLogger)
+	s.proxyManager = proxy.NewManager(s.config.Proxy, proxyLogger, certConfig)
 
 	// 创建IPTables管理器（使用适配器）
 	iptablesManager := iptables.NewManager(s.config.IPTables)
@@ -99,6 +130,10 @@ func (s *EnhancedService) initializeComponents() error {
 	// 暂时使用简化的任务处理器和监控收集器
 	s.taskHandler = &SimpleTaskHandler{}
 	s.metricsCollector = &SimpleMetricsCollector{}
+
+	// 注意：现在每个trojan实例都有自己的certManager，所以过期检查器需要重新设计
+	// 暂时禁用过期检查器，因为它需要重新设计来适应新的架构
+	s.expiryChecker = nil
 
 	// 创建增强WebSocket客户端
 	if s.config.WebSocket.Enabled {
@@ -112,6 +147,7 @@ func (s *EnhancedService) initializeComponents() error {
 			s.metricsCollector,
 			s.proxyManager,
 			s.iptablesManager,
+			s.certManager,
 		)
 	}
 
@@ -158,6 +194,18 @@ func (s *EnhancedService) Start() error {
 	s.wg.Add(1)
 	go s.healthCheckLoop()
 
+	// 启动证书过期检查器
+	if s.config.Certificate.Enabled && s.config.Certificate.Email != "" && s.expiryChecker != nil {
+		if err := s.expiryChecker.Start(); err != nil {
+			s.logger.WithError(err).Error("启动证书过期检查器失败")
+			// 不返回错误，因为这不是关键功能
+		} else {
+			s.logger.Info("证书过期检查器启动成功")
+		}
+	} else {
+		s.logger.Info("证书管理未启用或邮箱未配置，跳过证书过期检查器启动")
+	}
+
 	s.running = true
 	s.logger.Info("增强Agent服务启动成功")
 
@@ -191,6 +239,15 @@ func (s *EnhancedService) Stop() error {
 
 	// 停止代理管理器
 	s.stopProxyManager()
+
+	// 停止证书过期检查器
+	if s.expiryChecker != nil {
+		if err := s.expiryChecker.Stop(); err != nil {
+			s.logger.WithError(err).Error("停止证书过期检查器失败")
+		} else {
+			s.logger.Info("证书过期检查器停止成功")
+		}
+	}
 
 	// 等待所有goroutine结束
 	s.wg.Wait()
