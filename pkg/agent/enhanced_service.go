@@ -92,7 +92,7 @@ func NewEnhancedService(cfg *config.Config, serverID string) (*EnhancedService, 
 func (s *EnhancedService) initializeComponents() error {
 	// 创建证书管理器配置
 	var certConfig *cert.Config
-	if s.config.Certificate.Enabled && s.config.Certificate.Email != "" {
+	if s.config.Certificate.Enabled {
 		// 使用配置文件中的证书设置
 		certConfig = &cert.Config{
 			StorePath:       s.config.Certificate.StorePath,
@@ -107,15 +107,6 @@ func (s *EnhancedService) initializeComponents() error {
 				"use_staging": s.config.Certificate.UseStaging,
 			},
 		})
-	} else {
-		// 证书管理未启用，trojan代理将无法工作
-		s.logger.Warn("证书管理未启用或邮箱未配置，trojan代理将无法工作", logging.StandardFields{
-			Custom: map[string]interface{}{
-				"enabled": s.config.Certificate.Enabled,
-				"email":   s.config.Certificate.Email,
-			},
-		})
-		certConfig = nil
 	}
 
 	// 创建代理管理器
