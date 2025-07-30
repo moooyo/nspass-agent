@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -190,6 +191,9 @@ func (cm *ConnectionManager) connect() error {
 
 	// 构建连接URL
 	wsURL := fmt.Sprintf("%s/v1/agent/%s/websocket", cm.config.API.BaseURL, cm.agentID)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
+	cm.logger.Info("wsURL: " + wsURL)
 
 	// 配置拨号器
 	dialer := websocket.DefaultDialer
