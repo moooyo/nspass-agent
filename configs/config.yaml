@@ -72,6 +72,7 @@ upgrade:
 # 证书管理配置
 certificate:
   enabled: true                                    # 是否启用证书管理
+  # email: ""                                     # ACME账户邮箱（现在由后台动态配置）
   store_path: "/etc/nspass-agent/certs"           # 证书存储路径
   use_staging: false                              # 是否使用Let's Encrypt测试环境
   expiry_threshold: 7                             # 证书过期阈值（天）

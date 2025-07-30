@@ -170,6 +170,7 @@ type ProxyFactory interface {
 // DefaultProxyFactory 默认代理工厂
 type DefaultProxyFactory struct {
 	certConfig *cert.Config
+	logger     interfaces.Logger
 }
 
 // CreateProxy 创建代理实例
@@ -181,11 +182,17 @@ func (f *DefaultProxyFactory) CreateProxy(config *model.EgressItem) (ProxyInterf
 	case model.EgressMode_EGRESS_MODE_TROJAN:
 		// 使用现有的trojan包
 		trojanProxy := trojan.New(config)
-		// trojan必须有证书配置
-		if f.certConfig == nil {
-			return nil, fmt.Errorf("trojan代理必须配置证书管理器")
+		// trojan必须有证书配置，如果没有静态配置，尝试动态创建
+		certConfig := f.certConfig
+		if certConfig == nil {
+			// 尝试动态创建证书配置
+			dynamicCertConfig, err := f.createDynamicCertConfig(config)
+			if err != nil {
+				return nil, fmt.Errorf("trojan代理必须配置证书管理器: %w", err)
+			}
+			certConfig = dynamicCertConfig
 		}
-		trojanProxy.SetCertConfig(f.certConfig)
+		trojanProxy.SetCertConfig(certConfig)
 		return trojanProxy, nil
 	case model.EgressMode_EGRESS_MODE_SNELL:
 		// 使用现有的snell包
@@ -194,6 +201,42 @@ func (f *DefaultProxyFactory) CreateProxy(config *model.EgressItem) (ProxyInterf
 		return nil, errors.New(errors.ErrorTypeProxy, "PROXY_TYPE_UNSUPPORTED",
 			fmt.Sprintf("不支持的代理类型: %s", config.EgressMode))
 	}
+}
+
+// createDynamicCertConfig 动态创建证书配置
+func (f *DefaultProxyFactory) createDynamicCertConfig(config *model.EgressItem) (*cert.Config, error) {
+	// 检查是否有DNS配置ID
+	if config.DnsConfigId == nil {
+		return nil, fmt.Errorf("trojan代理需要dns_config_id来申请证书")
+	}
+
+	// 从全局DNS配置管理器获取DNS配置
+	dnsConfigMgr := cert.GetGlobalDNSConfigManager()
+	dnsConfig, err := dnsConfigMgr.GetDNSConfig(*config.DnsConfigId)
+	if err != nil {
+		return nil, fmt.Errorf("获取DNS配置失败: %w", err)
+	}
+
+	// 使用默认的证书配置，但使用一个通用的email
+	// 这里可以使用域名相关的email或者系统默认email
+	defaultEmail := fmt.Sprintf("admin@%s", dnsConfig.Domain)
+
+	certConfig := &cert.Config{
+		StorePath:       "/etc/nspass-agent/certs", // 使用默认路径
+		Email:           defaultEmail,
+		ExpiryThreshold: 7 * 24 * time.Hour, // 7天
+		UseStaging:      false,              // 生产环境
+	}
+
+	if f.logger != nil {
+		f.logger.Info("动态创建证书配置", map[string]interface{}{
+			"email":         certConfig.Email,
+			"domain":        dnsConfig.Domain,
+			"dns_config_id": *config.DnsConfigId,
+		})
+	}
+
+	return certConfig, nil
 }
 
 // SupportedTypes 支持的代理类型
@@ -210,14 +253,17 @@ func NewManager(cfg config.ProxyConfig, logger interfaces.Logger, certConfig *ce
 	ctx, cancel := context.WithCancel(context.Background())
 
 	manager := &Manager{
-		config:       cfg,
-		logger:       logger,
-		certManager:  nil, // 不再需要全局的certManager
-		instances:    make(map[string]*ProxyInstance),
-		proxyFactory: &DefaultProxyFactory{certConfig: certConfig},
-		ctx:          ctx,
-		cancel:       cancel,
-		eventsChan:   make(chan ProxyEvent, 100),
+		config:      cfg,
+		logger:      logger,
+		certManager: nil, // 不再需要全局的certManager
+		instances:   make(map[string]*ProxyInstance),
+		proxyFactory: &DefaultProxyFactory{
+			certConfig: certConfig,
+			logger:     logger,
+		},
+		ctx:        ctx,
+		cancel:     cancel,
+		eventsChan: make(chan ProxyEvent, 100),
 	}
 
 	// 创建监控器
