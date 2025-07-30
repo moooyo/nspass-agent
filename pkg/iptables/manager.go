@@ -123,6 +123,10 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 			continue
 		}
 
+		// 调试：输出proto配置的详细信息
+		fmt.Fprintf(os.Stderr, "[DEBUG] Proto配置 ID=%d, RuleAction='%s', Protocol='%s'\n",
+			config.Id, config.RuleAction, config.Protocol)
+
 		// 转换proto配置为规则参数
 		table, chain, ruleText := m.convertProtoConfigToRuleParts(config)
 
@@ -503,6 +507,18 @@ func (m *Manager) applyRules(content string) error {
 	log := logging.GetIPTablesLogger()
 	log.Info("开始应用新的iptables规则")
 
+	// 临时设置日志级别为debug以便查看详细信息
+	if globalLogger := logging.GetLogger(); globalLogger != nil {
+		// 这里我们强制输出调试信息到标准错误，以便立即看到
+		fmt.Fprintf(os.Stderr, "[DEBUG] 生成的iptables规则内容:\n%s\n", content)
+
+		// 分行输出以便查看第5行
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			fmt.Fprintf(os.Stderr, "[DEBUG] 第%d行: %s\n", i+1, line)
+		}
+	}
+
 	// 创建临时文件
 	tmpFile, err := os.CreateTemp("", "nspass-iptables-*.rules")
 	if err != nil {
@@ -516,6 +532,18 @@ func (m *Manager) applyRules(content string) error {
 		return fmt.Errorf("写入临时规则文件失败: %w", err)
 	}
 	tmpFile.Close()
+
+	// 调试：记录生成的规则内容
+	log.WithField("rules_content", content).Debug("生成的iptables规则内容")
+
+	// 分行记录规则内容以便调试
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		log.WithFields(logrus.Fields{
+			"line_number":  i + 1,
+			"line_content": line,
+		}).Debug("规则文件行内容")
+	}
 
 	// 应用规则
 	cmd := exec.Command("iptables-restore", tmpFile.Name())
@@ -631,24 +659,105 @@ type IPTablesTable struct {
 
 // convertProtoConfigToRuleParts 将proto配置转换为iptables规则部分
 func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (table, chain, ruleText string) {
-	// 设置表名
+	// 验证和设置表名
 	table = config.TableName
 	if table == "" {
 		table = "filter" // 默认表
 	}
+	// 验证表名是否有效
+	validTables := map[string]bool{"filter": true, "nat": true, "mangle": true, "raw": true}
+	if !validTables[table] {
+		fmt.Fprintf(os.Stderr, "[ERROR] 无效的表名: '%s', 使用默认值 'filter'\n", table)
+		table = "filter"
+	}
 
-	// 设置链名
+	// 验证和设置链名
 	chain = config.ChainName
 	if chain == "" {
-		chain = "INPUT" // 默认链
+		// 根据表名设置默认链
+		switch table {
+		case "nat":
+			chain = "POSTROUTING" // nat表默认使用POSTROUTING
+		case "mangle":
+			chain = "PREROUTING" // mangle表默认使用PREROUTING
+		default:
+			chain = "INPUT" // filter表等默认使用INPUT
+		}
+	}
+
+	// 验证链名是否与表名匹配
+	validChains := map[string]map[string]bool{
+		"filter": {"INPUT": true, "OUTPUT": true, "FORWARD": true},
+		"nat":    {"PREROUTING": true, "POSTROUTING": true, "OUTPUT": true},
+		"mangle": {"PREROUTING": true, "INPUT": true, "FORWARD": true, "OUTPUT": true, "POSTROUTING": true},
+		"raw":    {"PREROUTING": true, "OUTPUT": true},
+	}
+
+	if tableChains, exists := validChains[table]; exists {
+		if !tableChains[chain] && !strings.HasPrefix(chain, m.config.ChainPrefix) {
+			fmt.Fprintf(os.Stderr, "[WARN] 链名 '%s' 可能不适用于表 '%s'，配置ID: %d\n", chain, table, config.Id)
+		}
+	}
+
+	// 验证RuleAction是否有效
+	if config.RuleAction == "" {
+		fmt.Fprintf(os.Stderr, "[ERROR] RuleAction为空，配置ID: %d\n", config.Id)
+		return table, chain, ""
+	}
+
+	// 检查RuleAction是否是数字（这是错误的）
+	validActions := map[string]bool{
+		"ACCEPT": true, "DROP": true, "REJECT": true, "LOG": true,
+		"RETURN": true, "DNAT": true, "SNAT": true, "MASQUERADE": true,
+		"REDIRECT": true, "MARK": true, "CONNMARK": true, "NETMAP": true,
+		"SAME": true, "CLASSIFY": true, "TCPMSS": true, "TOS": true,
+		"TTL": true, "ULOG": true, "NFLOG": true, "TRACE": true,
+	}
+	if !validActions[config.RuleAction] {
+		fmt.Fprintf(os.Stderr, "[ERROR] 无效的RuleAction: '%s', 配置ID: %d\n", config.RuleAction, config.Id)
+		// 如果RuleAction是数字，这很可能是数据错误
+		if config.RuleAction == "5" || config.RuleAction == "1" || config.RuleAction == "2" ||
+			config.RuleAction == "3" || config.RuleAction == "4" {
+			fmt.Fprintf(os.Stderr, "[ERROR] RuleAction是数字，这可能是proto字段编号错误！\n")
+		}
+		return table, chain, ""
 	}
 
 	// 构建规则文本
 	var ruleParts []string
 
-	// 添加协议
+	// 验证和添加协议
 	if config.Protocol != "" && config.Protocol != "all" {
-		ruleParts = append(ruleParts, "-p", config.Protocol)
+		fmt.Fprintf(os.Stderr, "[DEBUG] 协议: '%s'\n", config.Protocol)
+
+		// 验证协议是否有效
+		validProtocols := map[string]bool{
+			"tcp": true, "udp": true, "icmp": true, "all": true,
+			"TCP": true, "UDP": true, "ICMP": true, "ALL": true,
+		}
+
+		// 检查协议是否是数字（可能的错误）
+		if config.Protocol == "1" || config.Protocol == "2" || config.Protocol == "3" || config.Protocol == "4" {
+			fmt.Fprintf(os.Stderr, "[ERROR] 协议是数字: '%s', 这可能是proto枚举值错误！配置ID: %d\n", config.Protocol, config.Id)
+			// 尝试转换数字到协议名
+			switch config.Protocol {
+			case "1":
+				config.Protocol = "tcp"
+			case "2":
+				config.Protocol = "udp"
+			case "3":
+				config.Protocol = "icmp"
+			case "4":
+				config.Protocol = "all"
+			}
+			fmt.Fprintf(os.Stderr, "[INFO] 自动转换协议为: '%s'\n", config.Protocol)
+		}
+
+		if validProtocols[config.Protocol] {
+			ruleParts = append(ruleParts, "-p", strings.ToLower(config.Protocol))
+		} else {
+			fmt.Fprintf(os.Stderr, "[ERROR] 无效的协议: '%s', 配置ID: %d\n", config.Protocol, config.Id)
+		}
 	}
 
 	// 添加源IP
@@ -663,11 +772,13 @@ func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (t
 
 	// 添加源端口
 	if config.SourcePort != nil && *config.SourcePort != "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] 源端口: '%s'\n", *config.SourcePort)
 		ruleParts = append(ruleParts, "--sport", *config.SourcePort)
 	}
 
 	// 添加目标端口
 	if config.DestPort != nil && *config.DestPort != "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] 目标端口: '%s'\n", *config.DestPort)
 		ruleParts = append(ruleParts, "--dport", *config.DestPort)
 	}
 
@@ -678,7 +789,37 @@ func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (t
 
 	// 添加动作
 	if config.RuleAction != "" {
+		// 调试：检查RuleAction的值
+		fmt.Fprintf(os.Stderr, "[DEBUG] RuleAction值: '%s'\n", config.RuleAction)
 		ruleParts = append(ruleParts, "-j", config.RuleAction)
+
+		// 对于SNAT，需要添加--to-source参数
+		if config.RuleAction == "SNAT" {
+			// 如果有目标IP，用作SNAT的源地址
+			if config.DestIp != nil && *config.DestIp != "" {
+				ruleParts = append(ruleParts, "--to-source", *config.DestIp)
+				fmt.Fprintf(os.Stderr, "[DEBUG] SNAT目标地址: '%s'\n", *config.DestIp)
+			} else {
+				fmt.Fprintf(os.Stderr, "[WARN] SNAT规则缺少--to-source参数，配置ID: %d\n", config.Id)
+			}
+		}
+
+		// 对于DNAT，需要添加--to-destination参数
+		if config.RuleAction == "DNAT" {
+			// 如果有目标IP和端口，用作DNAT的目标
+			if config.DestIp != nil && *config.DestIp != "" {
+				var dnatTarget string
+				if config.DestPort != nil && *config.DestPort != "" {
+					dnatTarget = fmt.Sprintf("%s:%s", *config.DestIp, *config.DestPort)
+				} else {
+					dnatTarget = *config.DestIp
+				}
+				ruleParts = append(ruleParts, "--to-destination", dnatTarget)
+				fmt.Fprintf(os.Stderr, "[DEBUG] DNAT目标: '%s'\n", dnatTarget)
+			} else {
+				fmt.Fprintf(os.Stderr, "[WARN] DNAT规则缺少--to-destination参数，配置ID: %d\n", config.Id)
+			}
+		}
 	}
 
 	// 添加注释（如果有）
@@ -687,6 +828,11 @@ func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (t
 	}
 
 	ruleText = strings.Join(ruleParts, " ")
+
+	// 调试：输出生成的规则文本
+	fmt.Fprintf(os.Stderr, "[DEBUG] 生成的规则文本: '%s'\n", ruleText)
+	fmt.Fprintf(os.Stderr, "[DEBUG] 规则部分: %v\n", ruleParts)
+
 	return table, chain, ruleText
 }
 

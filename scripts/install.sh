@@ -484,6 +484,80 @@ install_dependencies() {
     fi
 }
 
+# 配置系统设置
+setup_system_config() {
+    print_step "配置系统设置..."
+
+    # 启用IPv4转发
+    print_info "启用IPv4转发..."
+
+    # 检查当前IP转发状态
+    local current_forward=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+    debug_log "当前IP转发状态: $current_forward"
+
+    if [ "$current_forward" != "1" ]; then
+        # 临时启用IP转发
+        if sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
+            print_info "临时启用IPv4转发成功"
+        else
+            print_warn "临时启用IPv4转发失败"
+        fi
+
+        # 永久启用IP转发
+        local sysctl_conf="/etc/sysctl.conf"
+        local sysctl_d_conf="/etc/sysctl.d/99-nspass-agent.conf"
+
+        # 检查是否已经配置
+        if grep -q "^net.ipv4.ip_forward.*=.*1" "$sysctl_conf" 2>/dev/null; then
+            print_info "IPv4转发已在 $sysctl_conf 中配置"
+        elif [ -f "$sysctl_d_conf" ] && grep -q "^net.ipv4.ip_forward.*=.*1" "$sysctl_d_conf" 2>/dev/null; then
+            print_info "IPv4转发已在 $sysctl_d_conf 中配置"
+        else
+            # 创建专用的sysctl配置文件
+            print_info "创建IPv4转发配置文件: $sysctl_d_conf"
+            cat > "$sysctl_d_conf" << 'EOF'
+# NSPass Agent - IPv4 forwarding configuration
+# This file is created by NSPass Agent installer
+# Required for iptables SNAT/DNAT rules to work properly
+
+# Enable IPv4 packet forwarding
+net.ipv4.ip_forward = 1
+
+# Additional network optimizations for forwarding
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+EOF
+
+            if [ $? -eq 0 ]; then
+                print_info "IPv4转发配置文件创建成功"
+
+                # 应用配置
+                if sysctl -p "$sysctl_d_conf" >/dev/null 2>&1; then
+                    print_info "IPv4转发配置应用成功"
+                else
+                    print_warn "IPv4转发配置应用失败，但文件已创建"
+                fi
+            else
+                print_warn "创建IPv4转发配置文件失败"
+            fi
+        fi
+    else
+        print_info "IPv4转发已启用"
+    fi
+
+    # 验证IP转发状态
+    local final_forward=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+    if [ "$final_forward" = "1" ]; then
+        print_info "IPv4转发配置验证成功"
+    else
+        print_warn "IPv4转发配置验证失败，当前值: $final_forward"
+        print_warn "这可能会影响iptables SNAT/DNAT规则的正常工作"
+    fi
+
+    debug_log "系统配置设置完成"
+}
+
 # 停止服务（如果运行中）
 stop_service_if_running() {
     if systemctl is-active --quiet $SERVICE_NAME 2>/dev/null; then
@@ -1472,7 +1546,10 @@ main() {
     
     install_dependencies
     debug_log "依赖安装完成"
-    
+
+    setup_system_config
+    debug_log "系统配置完成"
+
     stop_service_if_running
     debug_log "服务停止完成"
     

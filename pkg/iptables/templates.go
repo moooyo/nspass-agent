@@ -160,7 +160,7 @@ COMMIT
 {{- end }}`
 
 // 单个规则模板
-const ruleTemplate = `{{ action .Action }} {{ .Chain }} {{ .Rule }} {{ comment .ID }}`
+const ruleTemplate = `{{ action .Action }} {{ .Chain }}{{ if .Rule }} {{ .Rule }}{{ end }} {{ comment .ID }}`
 
 // 链定义模板
 const chainTemplate = `:{{ .Name }} {{ .Policy }} {{ .Counters }}`
