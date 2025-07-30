@@ -168,7 +168,7 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 		"verify_hostname": true,
 		"cipher":          "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384",
 		"cipher_tls13":    "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
-		"sni":             egressConfig["sni"],
+		"sni":             domain,
 	}
 
 	// 验证证书路径（trojan必须有证书）
@@ -308,11 +308,6 @@ func (t *Trojan) IsRunning() bool {
 
 // validateTrojanConfig 验证trojan配置的完整性
 func (t *Trojan) validateTrojanConfig(cfg *model.EgressItem) error {
-	// 检查基本字段
-	if cfg.EgressId == "" {
-		return fmt.Errorf("egress_id不能为空")
-	}
-
 	if cfg.Port == nil {
 		return fmt.Errorf("port不能为空")
 	}
@@ -325,18 +320,6 @@ func (t *Trojan) validateTrojanConfig(cfg *model.EgressItem) error {
 	var egressConfig map[string]interface{}
 	if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
 		return fmt.Errorf("解析egress配置失败: %w", err)
-	}
-
-	// 检查domain字段
-	domain, ok := egressConfig["domain"].(string)
-	if !ok || domain == "" {
-		return fmt.Errorf("trojan配置必须包含domain字段")
-	}
-
-	// 检查SNI字段
-	sni, ok := egressConfig["sni"].(string)
-	if !ok || sni == "" {
-		return fmt.Errorf("trojan配置必须包含sni字段")
 	}
 
 	// 检查DNS配置ID（trojan必须有证书）
