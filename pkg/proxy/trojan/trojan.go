@@ -4,14 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
+	"github.com/nspass/nspass-agent/pkg/config"
 	"github.com/nspass/nspass-agent/pkg/logging"
+	"github.com/nspass/nspass-agent/pkg/process"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,22 +23,28 @@ const (
 
 // Trojan trojan代理实现
 type Trojan struct {
-	egressItem *model.EgressItem // 出口配置
-	configPath string
-	pidFile    string
+	egressItem     *model.EgressItem // 出口配置
+	config         config.ProxyConfig
+	configPath     string
+	processManager *process.Manager
 }
 
 // New 创建新的Trojan实例
 func New(egressItem *model.EgressItem) *Trojan {
+	configPath := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.json", egressItem.EgressId))
+	pidFile := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.pid", egressItem.EgressId))
+
+	processManager := process.NewManager("trojan", "trojan-go", DefaultBinPath, pidFile)
+
 	t := &Trojan{
-		egressItem: egressItem,
-		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.json", egressItem.EgressId)),
-		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.pid", egressItem.EgressId)),
+		egressItem:     egressItem,
+		configPath:     configPath,
+		processManager: processManager,
 	}
 
-	logging.LogStartup("trojan-proxy", "1.0", map[string]interface{}{
+	logging.LogStartup("trojan-proxy", "1.0", map[string]any{
 		"config_path": t.configPath,
-		"pid_file":    t.pidFile,
+		"pid_file":    pidFile,
 	})
 
 	return t
@@ -77,7 +82,7 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 	// 从EgressItem中解析配置
 	// 通用字段：Port和Password从EgressItem直接获取
 	// 特定配置：从EgressConfig JSON解析
-	egressConfig := make(map[string]interface{})
+	egressConfig := make(map[string]any)
 	if cfg.EgressConfig != "" {
 		if err := json.Unmarshal([]byte(cfg.EgressConfig), &egressConfig); err != nil {
 			log.WithError(err).Error("解析出口配置失败")
@@ -94,13 +99,13 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 	}
 
 	// 生成trojan服务端配置
-	config := map[string]interface{}{
+	config := map[string]any{
 		"run_type":   "server",                // 运行为服务端模式
 		"local_addr": "0.0.0.0",               // 监听外网地址
 		"local_port": *cfg.Port,               // 从通用字段获取监听端口
 		"password":   []string{*cfg.Password}, // 从通用字段获取
 		"log_level":  1,
-		"ssl": map[string]interface{}{
+		"ssl": map[string]any{
 			"verify":          true,
 			"verify_hostname": true,
 			"cert":            "",
@@ -108,7 +113,7 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 			"cipher_tls13":    "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384",
 			"sni":             egressConfig["sni"],
 		},
-		"tcp": map[string]interface{}{
+		"tcp": map[string]any{
 			"no_delay":       true,
 			"keep_alive":     true,
 			"reuse_port":     false,
@@ -158,53 +163,27 @@ func (t *Trojan) Configure(cfg *model.EgressItem) error {
 // Start 启动trojan
 func (t *Trojan) Start() error {
 	startTime := time.Now()
-	log := logging.GetProxyLogger().WithField("proxy_type", "trojan")
 
-	if t.IsRunning() {
-		log.Debug("trojan已在运行")
-		return nil
+	// 构建启动参数
+	args := []string{"-c", t.configPath}
+
+	// 使用进程管理器启动进程
+	cmd, err := t.processManager.StartProcess(args)
+	if err != nil {
+		return err
 	}
 
-	if !t.IsInstalled() {
-		logging.LogError(fmt.Errorf("trojan未安装"), "无法启动未安装的trojan", nil)
-		return fmt.Errorf("trojan未安装")
-	}
-
-	log.Debug("启动trojan服务")
-
-	// 启动trojan
-	trojanBinaryPath := filepath.Join(DefaultBinPath, "trojan-go")
-	cmd := exec.Command(trojanBinaryPath, "-c", t.configPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		logging.LogError(err, "启动trojan失败", logrus.Fields{
-			"config_path": t.configPath,
+	if cmd != nil {
+		duration := time.Since(startTime)
+		t.processManager.LogPerformance("start", duration, map[string]any{
+			"pid": cmd.Process.Pid,
 		})
-		return fmt.Errorf("启动trojan失败: %w", err)
-	}
 
-	// 写入PID文件
-	pid := cmd.Process.Pid
-	if err := os.WriteFile(t.pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		logging.LogError(err, "写入PID文件失败", logrus.Fields{
-			"pid":      pid,
-			"pid_file": t.pidFile,
+		// 记录状态变更
+		t.processManager.LogStateChange("stopped", "running", map[string]any{
+			"reason": "正常启动",
 		})
 	}
-
-	duration := time.Since(startTime)
-	logging.LogPerformance("trojan_start", duration, logrus.Fields{
-		"pid": pid,
-	})
-
-	// 记录状态变更
-	logging.LogStateChange("trojan", "stopped", "running", map[string]interface{}{"reason": "正常启动"})
-
-	log.WithFields(logrus.Fields{
-		"pid":         pid,
-		"duration_ms": duration.Milliseconds(),
-	}).Info("trojan服务已启动")
 
 	return nil
 }
@@ -212,123 +191,44 @@ func (t *Trojan) Start() error {
 // Stop 停止trojan
 func (t *Trojan) Stop() error {
 	startTime := time.Now()
-	log := logging.GetProxyLogger().WithField("proxy_type", "trojan")
 
-	log.Debug("停止trojan服务")
-
-	// 读取PID文件
-	pidData, err := os.ReadFile(t.pidFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Debug("PID文件不存在，trojan可能已停止")
-			return nil
-		}
-		logging.LogError(err, "读取PID文件失败", logrus.Fields{
-			"pid_file": t.pidFile,
-		})
-		return fmt.Errorf("读取PID文件失败: %w", err)
+	// 使用进程管理器停止进程
+	if err := t.processManager.StopProcess(); err != nil {
+		return err
 	}
-
-	pid, err := strconv.Atoi(string(pidData))
-	if err != nil {
-		logging.LogError(err, "解析PID失败", logrus.Fields{
-			"pid_data": string(pidData),
-		})
-		return fmt.Errorf("解析PID失败: %w", err)
-	}
-
-	// 发送TERM信号
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		logging.LogError(err, "停止进程失败", logrus.Fields{
-			"pid": pid,
-		})
-		return fmt.Errorf("停止进程失败: %w", err)
-	}
-
-	// 删除PID文件
-	os.Remove(t.pidFile)
 
 	duration := time.Since(startTime)
-	logging.LogPerformance("trojan_stop", duration, logrus.Fields{
-		"pid": pid,
-	})
+	t.processManager.LogPerformance("stop", duration, nil)
 
 	// 记录状态变更
-	logging.LogStateChange("trojan", "running", "stopped", map[string]interface{}{"reason": "正常停止"})
-
-	log.WithFields(logrus.Fields{
-		"pid":         pid,
-		"duration_ms": duration.Milliseconds(),
-	}).Info("trojan服务已停止")
+	t.processManager.LogStateChange("running", "stopped", map[string]any{
+		"reason": "正常停止",
+	})
 
 	return nil
 }
 
 // Restart 重启trojan
 func (t *Trojan) Restart() error {
-	if err := t.Stop(); err != nil {
-		logrus.Warnf("停止trojan失败: %v", err)
-	}
+	// 构建启动参数
+	args := []string{"-c", t.configPath}
 
-	return t.Start()
+	// 使用进程管理器重启进程
+	_, err := t.processManager.RestartProcess(args)
+	return err
 }
 
 // Status 获取trojan状态
 func (t *Trojan) Status() (string, error) {
-	log := logging.GetProxyLogger().WithField("proxy_type", "trojan")
-
-	if !t.IsInstalled() {
-		log.Debug("trojan未安装")
-		return "not_installed", nil
-	}
-
-	if t.IsRunning() {
-		log.Debug("trojan正在运行")
-		return "running", nil
-	}
-
-	log.Debug("trojan已停止")
-	return "stopped", nil
+	return t.processManager.GetStatus()
 }
 
 // IsInstalled 检查是否已安装
 func (t *Trojan) IsInstalled() bool {
-	binaryPath := filepath.Join(DefaultBinPath, "trojan-go")
-	_, err := os.Stat(binaryPath)
-	installed := err == nil
-
-	logging.GetProxyLogger().WithFields(logrus.Fields{
-		"proxy_type":  "trojan",
-		"binary_path": binaryPath,
-		"installed":   installed,
-	}).Debug("检查安装状态")
-
-	return installed
+	return t.processManager.IsInstalled()
 }
 
 // IsRunning 检查是否正在运行
 func (t *Trojan) IsRunning() bool {
-	log := logging.GetProxyLogger().WithField("proxy_type", "trojan")
-
-	// 检查PID文件
-	pidData, err := os.ReadFile(t.pidFile)
-	if err != nil {
-		log.WithField("pid_file", t.pidFile).Debug("PID文件不存在或读取失败")
-		return false
-	}
-
-	pid, err := strconv.Atoi(string(pidData))
-	if err != nil {
-		log.WithField("pid_data", string(pidData)).Debug("解析PID失败")
-		return false
-	}
-
-	// 检查进程是否存在
-	if err := syscall.Kill(pid, 0); err != nil {
-		log.WithField("pid", pid).Debug("进程不存在")
-		return false
-	}
-
-	log.WithField("pid", pid).Debug("trojan进程运行中")
-	return true
+	return t.processManager.IsRunning()
 }

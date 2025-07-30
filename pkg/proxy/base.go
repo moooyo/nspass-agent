@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nspass/nspass-agent/pkg/config"
+	"github.com/nspass/nspass-agent/pkg/interfaces"
 	"github.com/nspass/nspass-agent/pkg/logging"
 	"github.com/sirupsen/logrus"
 )
@@ -21,20 +22,25 @@ type BaseProxy struct {
 	config     config.ProxyConfig
 	configPath string
 	pidFile    string
+	binaryName string
+	logger     interfaces.Logger
 }
 
 // NewBaseProxy 创建基础代理实例
-func NewBaseProxy(proxyType string, cfg config.ProxyConfig, configFileName string) *BaseProxy {
+func NewBaseProxy(proxyType string, cfg config.ProxyConfig, configFileName, binaryName string) *BaseProxy {
 	base := &BaseProxy{
 		proxyType:  proxyType,
 		config:     cfg,
 		configPath: filepath.Join(cfg.ConfigPath, configFileName),
 		pidFile:    filepath.Join(cfg.ConfigPath, proxyType+".pid"),
+		binaryName: binaryName,
+		logger:     logging.GetComponentLogger(proxyType + "-proxy"),
 	}
 
-	logging.LogStartup(proxyType+"-proxy", "1.0", map[string]interface{}{
+	logging.LogStartup(proxyType+"-proxy", "1.0", map[string]any{
 		"config_path": base.configPath,
 		"pid_file":    base.pidFile,
+		"binary_name": base.binaryName,
 	})
 
 	return base
@@ -60,8 +66,8 @@ func (b *BaseProxy) EnsureConfigDirectory() error {
 	configDir := filepath.Dir(b.configPath)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		logging.LogError(err, "创建配置目录失败", logrus.Fields{
-			"proxy_type":  b.proxyType,
-			"config_dir":  configDir,
+			"proxy_type": b.proxyType,
+			"config_dir": configDir,
 		})
 		return fmt.Errorf("创建配置目录失败: %w", err)
 	}
@@ -176,6 +182,20 @@ func (b *BaseProxy) IsRunning() bool {
 	return err == nil
 }
 
+// IsInstalled 检查二进制文件是否已安装
+func (b *BaseProxy) IsInstalled() bool {
+	binaryPath := filepath.Join(b.config.BinPath, b.binaryName)
+	_, err := os.Stat(binaryPath)
+	installed := err == nil
+
+	b.logger.WithFields(map[string]interface{}{
+		"binary_path": binaryPath,
+		"installed":   installed,
+	}).Debug("检查安装状态")
+
+	return installed
+}
+
 // GetPID 从PID文件获取进程ID
 func (b *BaseProxy) GetPID() int {
 	if _, err := os.Stat(b.pidFile); os.IsNotExist(err) {
@@ -197,7 +217,8 @@ func (b *BaseProxy) GetPID() int {
 
 // WritePID 写入PID到文件
 func (b *BaseProxy) WritePID(pid int) error {
-	return os.WriteFile(b.pidFile, []byte(fmt.Sprintf("%d", pid)), 0644)
+	pidData := fmt.Sprintf("%d", pid)
+	return os.WriteFile(b.pidFile, []byte(pidData), 0644)
 }
 
 // RemovePIDFile 删除PID文件
@@ -256,8 +277,60 @@ func (b *BaseProxy) StopProcess() error {
 
 // GetStatus 获取状态
 func (b *BaseProxy) GetStatus() (string, error) {
+	if !b.IsInstalled() {
+		return "not_installed", nil
+	}
 	if b.IsRunning() {
 		return "running", nil
 	}
 	return "stopped", nil
+}
+
+// StartProcess 启动进程的通用方法
+func (b *BaseProxy) StartProcess(args []string) (*exec.Cmd, error) {
+	if b.IsRunning() {
+		b.logger.Debug("进程已在运行")
+		return nil, nil
+	}
+
+	if !b.IsInstalled() {
+		return nil, fmt.Errorf("%s未安装", b.proxyType)
+	}
+
+	b.logger.Debug("启动进程")
+
+	// 构建完整的二进制路径
+	binaryPath := filepath.Join(b.config.BinPath, b.binaryName)
+	cmd := exec.Command(binaryPath, args...)
+
+	// 设置进程组，便于管理
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	if err := cmd.Start(); err != nil {
+		b.logger.WithError(err).Error("启动进程失败")
+		return nil, fmt.Errorf("启动%s失败: %w", b.proxyType, err)
+	}
+
+	// 写入PID文件
+	if err := b.WritePID(cmd.Process.Pid); err != nil {
+		b.logger.WithError(err).Warn("写入PID文件失败")
+		// 不要因为PID文件写入失败而返回错误，服务已经启动了
+	}
+
+	b.logger.WithField("pid", cmd.Process.Pid).Info("进程已启动")
+	return cmd, nil
+}
+
+// RestartProcess 重启进程的通用方法
+func (b *BaseProxy) RestartProcess(args []string) (*exec.Cmd, error) {
+	if err := b.StopProcess(); err != nil {
+		b.logger.WithError(err).Warn("停止进程失败")
+	}
+
+	// 等待一小段时间确保完全停止
+	time.Sleep(1 * time.Second)
+
+	return b.StartProcess(args)
 }

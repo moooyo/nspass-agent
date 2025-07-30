@@ -20,6 +20,7 @@ type ProxyInterface interface {
 	Configure(config *model.EgressItem) error
 	Start() error
 	Stop() error
+	Restart() error
 	Status() (string, error)
 	IsInstalled() bool
 	IsRunning() bool
