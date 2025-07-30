@@ -78,12 +78,11 @@ func NewEnhancedService(cfg *config.Config, serverID string) (*EnhancedService, 
 
 	// 记录启动信息
 	service.logger.(*logging.EnhancedLogger).LogStartup("1.0", map[string]interface{}{
-		"server_id":         serverID,
-		"update_interval":   cfg.UpdateInterval,
-		"api_base_url":      cfg.API.BaseURL,
-		"proxy_enabled":     len(cfg.Proxy.EnabledTypes) > 0,
-		"iptables_enabled":  cfg.IPTables.Enable,
-		"websocket_enabled": cfg.WebSocket.Enabled,
+		"server_id":        serverID,
+		"update_interval":  cfg.UpdateInterval,
+		"api_base_url":     cfg.API.BaseURL,
+		"proxy_enabled":    len(cfg.Proxy.EnabledTypes) > 0,
+		"iptables_enabled": cfg.IPTables.Enable,
 	})
 
 	return service, nil
@@ -136,20 +135,18 @@ func (s *EnhancedService) initializeComponents() error {
 	s.expiryChecker = nil
 
 	// 创建增强WebSocket客户端
-	if s.config.WebSocket.Enabled {
-		wsLogger := logging.GetComponentLogger("websocket-client")
-		s.wsClient = websocket.NewEnhancedClient(
-			s.config,
-			s.serverID,
-			s.config.API.Token,
-			wsLogger,
-			s.taskHandler,
-			s.metricsCollector,
-			s.proxyManager,
-			s.iptablesManager,
-			s.certManager,
-		)
-	}
+	wsLogger := logging.GetComponentLogger("websocket-client")
+	s.wsClient = websocket.NewEnhancedClient(
+		s.config,
+		s.serverID,
+		s.config.API.Token,
+		wsLogger,
+		s.taskHandler,
+		s.metricsCollector,
+		s.proxyManager,
+		s.iptablesManager,
+		s.certManager,
+	)
 
 	return nil
 }
@@ -178,12 +175,10 @@ func (s *EnhancedService) Start() error {
 	}
 
 	// 启动WebSocket客户端
-	if s.config.WebSocket.Enabled {
-		if err := s.startWebSocketClient(); err != nil {
-			s.stopIPTablesManager()
-			s.stopProxyManager()
-			return err
-		}
+	if err := s.startWebSocketClient(); err != nil {
+		s.stopIPTablesManager()
+		s.stopProxyManager()
+		return err
 	}
 
 	// 启动配置更新循环

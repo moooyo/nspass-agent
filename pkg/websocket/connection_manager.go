@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"sync"
 	"time"
 
@@ -188,7 +189,7 @@ func (cm *ConnectionManager) connect() error {
 	cm.logger.Info("正在建立WebSocket连接")
 
 	// 构建连接URL
-	wsURL := cm.config.WebSocket.ServerURL
+	wsURL := fmt.Sprintf("%s/v1/agent/%s/websocket", cm.config.API.BaseURL, cm.agentID)
 
 	// 配置拨号器
 	dialer := websocket.DefaultDialer

@@ -129,9 +129,6 @@ type IPTablesConfig struct {
 
 // WebSocketConfig WebSocket配置
 type WebSocketConfig struct {
-	Enabled              bool   `yaml:"enabled" json:"enabled"`                               // 是否启用WebSocket
-	ServerURL            string `yaml:"server_url" json:"server_url"`                         // WebSocket服务器地址
-	AgentID              string `yaml:"agent_id" json:"agent_id"`                             // 代理ID
 	HeartbeatInterval    string `yaml:"heartbeat_interval" json:"heartbeat_interval"`         // 心跳间隔
 	MetricsInterval      string `yaml:"metrics_interval" json:"metrics_interval"`             // 监控数据上报间隔
 	ReconnectInterval    string `yaml:"reconnect_interval" json:"reconnect_interval"`         // 重连间隔
@@ -305,9 +302,6 @@ func setWebSocketDefaults(ws *WebSocketConfig, defaults DefaultValues) {
 	if ws.ReconnectInterval == "" {
 		ws.ReconnectInterval = defaults.WebSocketReconnectInterval
 	}
-	if ws.AgentID == "" {
-		ws.AgentID = defaults.WebSocketAgentID
-	}
 }
 
 // setUpgradeDefaults 设置升级配置默认值
@@ -393,10 +387,6 @@ func (c *Config) validateAPI() []ValidationError {
 // validateWebSocket 验证WebSocket配置
 func (c *Config) validateWebSocket() []ValidationError {
 	var errors []ValidationError
-
-	if c.WebSocket.Enabled && c.WebSocket.ServerURL == "" {
-		errors = append(errors, ValidationError{"websocket.server_url", "启用WebSocket时不能为空"})
-	}
 
 	// 验证时间间隔格式
 	if c.WebSocket.HeartbeatInterval != "" {
