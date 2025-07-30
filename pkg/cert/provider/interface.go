@@ -48,14 +48,12 @@ type DNSProviderConfig interface {
 // CloudflareConfig Cloudflare DNS提供商配置
 type CloudflareConfig struct {
 	APIToken string `json:"api_token"` // Cloudflare API Token
-	Email    string `json:"email"`     // Cloudflare账户邮箱（可选，使用API Token时不需要）
-	APIKey   string `json:"api_key"`   // Cloudflare Global API Key（可选，使用API Token时不需要）
 }
 
 // Validate 验证Cloudflare配置
 func (c *CloudflareConfig) Validate() error {
-	if c.APIToken == "" && (c.Email == "" || c.APIKey == "") {
-		return fmt.Errorf("必须提供API Token或者Email+API Key组合")
+	if c.APIToken == "" {
+		return fmt.Errorf("必须提供API Token")
 	}
 	return nil
 }

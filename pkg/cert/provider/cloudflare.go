@@ -316,9 +316,6 @@ func (p *CloudflareProvider) deleteDNSRecord(ctx context.Context, zoneID, record
 func (p *CloudflareProvider) setAuthHeaders(req *http.Request) {
 	if p.config.APIToken != "" {
 		req.Header.Set("Authorization", "Bearer "+p.config.APIToken)
-	} else {
-		req.Header.Set("X-Auth-Email", p.config.Email)
-		req.Header.Set("X-Auth-Key", p.config.APIKey)
 	}
 }
 
