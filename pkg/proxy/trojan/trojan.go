@@ -32,8 +32,8 @@ type Trojan struct {
 
 // New 创建新的Trojan实例
 func New(egressItem *model.EgressItem) *Trojan {
-	configPath := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.json", egressItem.EgressId))
-	pidFile := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%s.pid", egressItem.EgressId))
+	configPath := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%d.json", egressItem.Id))
+	pidFile := filepath.Join(DefaultConfigPath, fmt.Sprintf("trojan-%d.pid", egressItem.Id))
 
 	processManager := process.NewManager("trojan", "trojan-go", DefaultBinPath, pidFile)
 

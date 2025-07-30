@@ -151,18 +151,18 @@ func (p *EgressConfigParser) ProcessEgressItems(items []*model.EgressItem) ([]*m
 	for _, item := range items {
 		// 验证配置
 		if err := p.ValidateEgressConfig(item); err != nil {
-			return nil, fmt.Errorf("出口配置验证失败 [%s]: %w", item.EgressId, err)
+			return nil, fmt.Errorf("出口配置验证失败 [%d]: %w", item.Id, err)
 		}
 
 		// 解析配置（这里主要是验证，实际的配置解析由代理管理器处理）
 		parsedConfig, err := p.ParseEgressConfig(item)
 		if err != nil {
-			return nil, fmt.Errorf("出口配置解析失败 [%s]: %w", item.EgressId, err)
+			return nil, fmt.Errorf("出口配置解析失败 [%d]: %w", item.Id, err)
 		}
 
 		// 记录解析结果用于调试（简化版本，避免依赖问题）
-		fmt.Printf("出口配置解析完成: egress_id=%s, mode=%s, port=%d, has_password=%t, specific_fields=%d\n",
-			item.EgressId, item.EgressMode, parsedConfig.Port, parsedConfig.Password != "", len(parsedConfig.SpecificConfig))
+		fmt.Printf("出口配置解析完成: egress_id=%d, mode=%s, port=%d, has_password=%t, specific_fields=%d\n",
+			item.Id, item.EgressMode, parsedConfig.Port, parsedConfig.Password != "", len(parsedConfig.SpecificConfig))
 
 		processedItems = append(processedItems, item)
 	}

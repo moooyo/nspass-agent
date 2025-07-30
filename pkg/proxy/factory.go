@@ -62,7 +62,7 @@ func (pf *SimpleProxyFactory) CreateProxy(egressItem *model.EgressItem) (ProxyIn
 	pf.logger.Info("创建代理实例", logging.StandardFields{
 		ProxyType: proxyType,
 		Custom: map[string]interface{}{
-			"egress_id": egressItem.EgressId,
+			"egress_id": fmt.Sprintf("%d", egressItem.Id),
 		},
 	})
 
@@ -131,7 +131,7 @@ func (pm *ProxyManager) CreateProxy(egressItem *model.EgressItem) (ProxyInterfac
 		return nil, fmt.Errorf("出口配置不能为空")
 	}
 
-	egressID := egressItem.EgressId
+	egressID := fmt.Sprintf("%d", egressItem.Id)
 
 	// 检查是否已存在
 	if existing, exists := pm.proxies[egressID]; exists {

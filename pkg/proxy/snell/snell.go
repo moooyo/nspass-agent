@@ -36,8 +36,8 @@ type Snell struct {
 func New(egressItem *model.EgressItem) *Snell {
 	s := &Snell{
 		egressItem: egressItem,
-		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%s.conf", egressItem.EgressId)),
-		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%s.pid", egressItem.EgressId)),
+		configPath: filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%d.conf", egressItem.Id)),
+		pidFile:    filepath.Join(DefaultConfigPath, fmt.Sprintf("snell-%d.pid", egressItem.Id)),
 	}
 
 	logging.LogStartup("snell-proxy", "1.0", map[string]interface{}{

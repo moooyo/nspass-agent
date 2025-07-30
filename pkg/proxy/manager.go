@@ -296,7 +296,7 @@ func (em *Manager) UpdateProxies(configs []*model.EgressItem) error {
 
 	// 处理新配置
 	for _, config := range configs {
-		proxyID := config.EgressId
+		proxyID := fmt.Sprintf("%d", config.Id)
 		delete(existingIDs, proxyID)
 
 		if instance, exists := em.instances[proxyID]; exists {
@@ -333,14 +333,14 @@ func (em *Manager) createProxyInstance(config *model.EgressItem) error {
 	}
 
 	instance := &ProxyInstance{
-		ID:     config.EgressId,
+		ID:     fmt.Sprintf("%d", config.Id),
 		Type:   config.EgressMode,
 		Config: config,
 		Proxy:  proxy,
 		State:  InstanceStateStopped,
 	}
 
-	em.instances[config.EgressId] = instance
+	em.instances[fmt.Sprintf("%d", config.Id)] = instance
 
 	// 配置代理
 	if err := proxy.Configure(config); err != nil {
@@ -348,11 +348,11 @@ func (em *Manager) createProxyInstance(config *model.EgressItem) error {
 		return errors.Wrap(err, errors.ErrorTypeProxy, "PROXY_CONFIGURE_FAILED", "配置代理失败")
 	}
 
-	em.logger.WithField("proxy_id", config.EgressId).
+	em.logger.WithField("proxy_id", fmt.Sprintf("%d", config.Id)).
 		WithField("proxy_type", config.EgressMode).
 		Info("代理实例创建成功")
 
-	em.emitEvent("created", config.EgressId, InstanceStateStopped, nil)
+	em.emitEvent("created", fmt.Sprintf("%d", config.Id), InstanceStateStopped, nil)
 	return nil
 }
 
@@ -363,7 +363,7 @@ func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.Eg
 		return nil
 	}
 
-	em.logger.WithField("proxy_id", config.EgressId).Info("代理配置有变化，重新配置")
+	em.logger.WithField("proxy_id", fmt.Sprintf("%d", config.Id)).Info("代理配置有变化，重新配置")
 
 	// 停止代理
 	if instance.GetState() == InstanceStateRunning {
@@ -379,7 +379,7 @@ func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.Eg
 		return errors.Wrap(err, errors.ErrorTypeProxy, "PROXY_RECONFIGURE_FAILED", "重新配置代理失败")
 	}
 
-	em.emitEvent("updated", config.EgressId, instance.GetState(), nil)
+	em.emitEvent("updated", fmt.Sprintf("%d", config.Id), instance.GetState(), nil)
 	return nil
 }
 
@@ -780,7 +780,7 @@ func (em *Manager) checkTrojanDomain(config *model.EgressItem, domain string) bo
 		em.logger.Warn("解析trojan配置失败", logging.StandardFields{
 			Error: err,
 			Custom: map[string]interface{}{
-				"egress_id": config.EgressId,
+				"egress_id": fmt.Sprintf("%d", config.Id),
 			},
 		})
 		return false

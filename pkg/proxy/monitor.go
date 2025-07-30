@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -174,7 +175,7 @@ func (pm *ProxyMonitor) RegisterProxy(config *model.EgressItem, instance ProxyIn
 	defer pm.mu.Unlock()
 
 	state := &ProxyState{
-		ID:             config.EgressId,
+		ID:             fmt.Sprintf("%d", config.Id),
 		Type:           config.EgressMode,
 		Instance:       instance,
 		Config:         config,
@@ -185,10 +186,10 @@ func (pm *ProxyMonitor) RegisterProxy(config *model.EgressItem, instance ProxyIn
 		Enabled:        true,
 	}
 
-	pm.states[config.EgressId] = state
+	pm.states[fmt.Sprintf("%d", config.Id)] = state
 
 	pm.log.WithFields(logrus.Fields{
-		"proxy_id":   config.EgressId,
+		"proxy_id":   fmt.Sprintf("%d", config.Id),
 		"proxy_type": config.EgressMode,
 	}).Info("代理已注册到监控器")
 }

@@ -29,8 +29,8 @@ type Shadowsocks struct {
 
 // New 创建新的Shadowsocks实例
 func New(egressItem *model.EgressItem) *Shadowsocks {
-	configPath := filepath.Join("/etc/nspass-agent", fmt.Sprintf("shadowsocks-%s.json", egressItem.EgressId))
-	pidFile := filepath.Join("/etc/nspass-agent", fmt.Sprintf("shadowsocks-%s.pid", egressItem.EgressId))
+	configPath := filepath.Join("/etc/nspass-agent", fmt.Sprintf("shadowsocks-%d.json", egressItem.Id))
+	pidFile := filepath.Join("/etc/nspass-agent", fmt.Sprintf("shadowsocks-%d.pid", egressItem.Id))
 
 	processManager := process.NewManager("shadowsocks", "go-shadowsocks2", DefaultBinPath, pidFile)
 
