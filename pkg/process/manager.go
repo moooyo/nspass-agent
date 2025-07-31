@@ -279,3 +279,8 @@ func (pm *Manager) EnsureConfigDirectory(configPath string) error {
 	}
 	return nil
 }
+
+// GetPIDFile 获取PID文件路径
+func (pm *Manager) GetPIDFile() string {
+	return pm.pidFile
+}

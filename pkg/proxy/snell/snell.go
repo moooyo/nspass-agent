@@ -315,3 +315,56 @@ func (s *Snell) IsRunning() bool {
 	log.WithField("pid", pid).Debug("snell进程运行中")
 	return true
 }
+
+// Cleanup 清理配置文件和PID文件
+func (s *Snell) Cleanup() error {
+	log := logging.GetProxyLogger().WithField("proxy_type", "snell")
+	log.Debug("开始清理snell配置文件和PID文件")
+
+	var errors []error
+
+	// 确保进程已停止
+	if s.IsRunning() {
+		if err := s.Stop(); err != nil {
+			log.WithError(err).Warn("停止进程失败，继续清理文件")
+			errors = append(errors, fmt.Errorf("停止进程失败: %w", err))
+		}
+	}
+
+	// 删除配置文件
+	if _, err := os.Stat(s.configPath); err == nil {
+		if err := os.Remove(s.configPath); err != nil {
+			log.WithError(err).WithField("config_path", s.configPath).Error("删除配置文件失败")
+			errors = append(errors, fmt.Errorf("删除配置文件失败: %w", err))
+		} else {
+			log.WithField("config_path", s.configPath).Info("配置文件已删除")
+		}
+	}
+
+	// 删除PID文件
+	if _, err := os.Stat(s.pidFile); err == nil {
+		if err := os.Remove(s.pidFile); err != nil {
+			log.WithError(err).WithField("pid_file", s.pidFile).Error("删除PID文件失败")
+			errors = append(errors, fmt.Errorf("删除PID文件失败: %w", err))
+		} else {
+			log.WithField("pid_file", s.pidFile).Info("PID文件已删除")
+		}
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("清理过程中发生错误: %v", errors)
+	}
+
+	log.Info("snell清理完成")
+	return nil
+}
+
+// GetConfigPath 获取配置文件路径
+func (s *Snell) GetConfigPath() string {
+	return s.configPath
+}
+
+// GetPIDPath 获取PID文件路径
+func (s *Snell) GetPIDPath() string {
+	return s.pidFile
+}

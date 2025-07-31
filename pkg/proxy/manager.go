@@ -4,7 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/moooyo/nspass-proto/generated/model"
@@ -27,6 +33,10 @@ type ProxyInterface interface {
 	Status() (string, error)
 	IsInstalled() bool
 	IsRunning() bool
+	// 新增清理方法
+	Cleanup() error        // 清理配置文件和PID文件
+	GetConfigPath() string // 获取配置文件路径
+	GetPIDPath() string    // 获取PID文件路径
 }
 
 // InstanceState 代理实例状态
@@ -159,6 +169,9 @@ type ProxyEvent struct {
 	State     InstanceState
 	Error     error
 	Timestamp time.Time
+	// 新增字段用于配置变更事件
+	OldConfig *model.EgressItem // 旧配置（用于配置变更事件）
+	NewConfig *model.EgressItem // 新配置（用于配置变更事件）
 }
 
 // ProxyFactory 代理工厂接口
@@ -272,6 +285,10 @@ func NewManager(cfg config.ProxyConfig, logger interfaces.Logger, certConfig *ce
 	// 启动事件处理
 	manager.wg.Add(1)
 	go manager.eventLoop()
+
+	// 执行启动时的状态同步
+	manager.wg.Add(1)
+	go manager.syncExistingProxiesOnStartup()
 
 	return manager
 }
@@ -388,6 +405,19 @@ func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.Eg
 		}
 	}
 
+	// 清理旧的配置文件（保留PID文件，因为可能需要重用）
+	oldConfigPath := instance.Proxy.GetConfigPath()
+	if _, err := os.Stat(oldConfigPath); err == nil {
+		if err := os.Remove(oldConfigPath); err != nil {
+			em.logger.WithError(err).WithField("config_path", oldConfigPath).Warn("删除旧配置文件失败")
+		} else {
+			em.logger.WithField("config_path", oldConfigPath).Debug("旧配置文件已删除")
+		}
+	}
+
+	// 保存旧配置用于事件
+	oldConfig := instance.Config
+
 	// 更新配置
 	instance.Config = config
 	if err := instance.Proxy.Configure(config); err != nil {
@@ -395,7 +425,8 @@ func (em *Manager) updateProxyInstance(instance *ProxyInstance, config *model.Eg
 		return errors.Wrap(err, errors.ErrorTypeProxy, "PROXY_RECONFIGURE_FAILED", "重新配置代理失败")
 	}
 
-	em.emitEvent("updated", fmt.Sprintf("%d", config.Id), instance.GetState(), nil)
+	// 发送配置变更事件
+	em.emitEventWithConfig("config_changed", fmt.Sprintf("%d", config.Id), instance.GetState(), nil, oldConfig, config)
 
 	// 重新启动代理
 	if err := em.startProxyInstance(instance); err != nil {
@@ -420,6 +451,16 @@ func (em *Manager) removeProxyInstance(proxyID string) error {
 		if err := em.stopProxyInstance(instance); err != nil {
 			em.logger.WithError(err).WithField("proxy_id", proxyID).Warn("停止代理失败")
 		}
+	}
+
+	// 清理配置文件和PID文件
+	if err := instance.Proxy.Cleanup(); err != nil {
+		em.logger.WithError(err).WithField("proxy_id", proxyID).Warn("清理代理文件失败")
+	}
+
+	// 从监控器中注销代理
+	if em.monitor != nil {
+		em.monitor.UnregisterProxy(proxyID)
 	}
 
 	delete(em.instances, proxyID)
@@ -555,12 +596,19 @@ func (em *Manager) stopProxyInstance(instance *ProxyInstance) error {
 
 // emitEvent 发送事件
 func (em *Manager) emitEvent(eventType, proxyID string, state InstanceState, err error) {
+	em.emitEventWithConfig(eventType, proxyID, state, err, nil, nil)
+}
+
+// emitEventWithConfig 发送带配置信息的事件
+func (em *Manager) emitEventWithConfig(eventType, proxyID string, state InstanceState, err error, oldConfig, newConfig *model.EgressItem) {
 	event := ProxyEvent{
 		Type:      eventType,
 		ProxyID:   proxyID,
 		State:     state,
 		Error:     err,
 		Timestamp: time.Now(),
+		OldConfig: oldConfig,
+		NewConfig: newConfig,
 	}
 
 	select {
@@ -591,6 +639,18 @@ func (em *Manager) handleEvent(event ProxyEvent) {
 		WithField("state", event.State.String()).
 		Debug("处理代理事件")
 
+	// 处理特定事件类型
+	switch event.Type {
+	case "config_changed":
+		em.handleConfigChangeEvent(event)
+	case "started":
+		em.handleProxyStartedEvent(event)
+	case "stopped":
+		em.handleProxyStoppedEvent(event)
+	case "start_failed", "stop_failed":
+		em.handleProxyErrorEvent(event)
+	}
+
 	// 更新统计信息
 	em.updateStats()
 
@@ -602,11 +662,356 @@ func (em *Manager) handleEvent(event ProxyEvent) {
 	}
 }
 
+// handleConfigChangeEvent 处理配置变更事件
+func (em *Manager) handleConfigChangeEvent(event ProxyEvent) {
+	if event.OldConfig == nil || event.NewConfig == nil {
+		return
+	}
+
+	em.logger.WithField("proxy_id", event.ProxyID).
+		WithField("old_mode", event.OldConfig.EgressMode).
+		WithField("new_mode", event.NewConfig.EgressMode).
+		Info("代理配置已变更")
+
+	// 记录配置变更的详细信息
+	configChanges := em.detectConfigChanges(event.OldConfig, event.NewConfig)
+	if len(configChanges) > 0 {
+		em.logger.WithField("proxy_id", event.ProxyID).
+			WithField("changes", configChanges).
+			Info("配置变更详情")
+	}
+}
+
+// handleProxyStartedEvent 处理代理启动事件
+func (em *Manager) handleProxyStartedEvent(event ProxyEvent) {
+	em.logger.WithField("proxy_id", event.ProxyID).Info("代理启动成功")
+
+	// 可以在这里添加启动后的额外处理逻辑
+	// 例如：注册到监控系统、更新负载均衡器等
+}
+
+// handleProxyStoppedEvent 处理代理停止事件
+func (em *Manager) handleProxyStoppedEvent(event ProxyEvent) {
+	em.logger.WithField("proxy_id", event.ProxyID).Info("代理已停止")
+
+	// 可以在这里添加停止后的额外处理逻辑
+	// 例如：从监控系统注销、更新负载均衡器等
+}
+
+// handleProxyErrorEvent 处理代理错误事件
+func (em *Manager) handleProxyErrorEvent(event ProxyEvent) {
+	em.logger.WithError(event.Error).
+		WithField("proxy_id", event.ProxyID).
+		WithField("event_type", event.Type).
+		Error("代理操作失败")
+
+	// 可以在这里添加错误处理逻辑
+	// 例如：发送告警、记录到错误日志、尝试恢复等
+}
+
+// detectConfigChanges 检测配置变更
+func (em *Manager) detectConfigChanges(oldConfig, newConfig *model.EgressItem) []string {
+	var changes []string
+
+	if oldConfig.EgressMode != newConfig.EgressMode {
+		changes = append(changes, fmt.Sprintf("模式: %s -> %s", oldConfig.EgressMode, newConfig.EgressMode))
+	}
+
+	if !em.compareOptionalInt32(oldConfig.Port, newConfig.Port) {
+		oldPort := "nil"
+		newPort := "nil"
+		if oldConfig.Port != nil {
+			oldPort = fmt.Sprintf("%d", *oldConfig.Port)
+		}
+		if newConfig.Port != nil {
+			newPort = fmt.Sprintf("%d", *newConfig.Port)
+		}
+		changes = append(changes, fmt.Sprintf("端口: %s -> %s", oldPort, newPort))
+	}
+
+	if !em.compareOptionalString(oldConfig.Password, newConfig.Password) {
+		changes = append(changes, "密码已变更")
+	}
+
+	if oldConfig.EgressConfig != newConfig.EgressConfig {
+		changes = append(changes, "代理配置已变更")
+	}
+
+	if !em.compareOptionalUint32(oldConfig.DnsConfigId, newConfig.DnsConfigId) {
+		changes = append(changes, "DNS配置ID已变更")
+	}
+
+	return changes
+}
+
 // configEquals 比较配置是否相等
 func (em *Manager) configEquals(config1, config2 *model.EgressItem) bool {
-	// 简化的配置比较，实际应该比较所有相关字段
-	return config1.EgressConfig == config2.EgressConfig &&
-		config1.EgressMode == config2.EgressMode
+	if config1 == nil || config2 == nil {
+		return config1 == config2
+	}
+
+	// 比较基本字段
+	if config1.Id != config2.Id {
+		return false
+	}
+
+	if config1.EgressMode != config2.EgressMode {
+		return false
+	}
+
+	if config1.EgressConfig != config2.EgressConfig {
+		return false
+	}
+
+	// 比较端口
+	if !em.compareOptionalInt32(config1.Port, config2.Port) {
+		return false
+	}
+
+	// 比较密码
+	if !em.compareOptionalString(config1.Password, config2.Password) {
+		return false
+	}
+
+	// 比较DNS配置ID
+	if !em.compareOptionalUint32(config1.DnsConfigId, config2.DnsConfigId) {
+		return false
+	}
+
+	// 比较服务器ID
+	if config1.ServerId != config2.ServerId {
+		return false
+	}
+
+	// 比较出口名称
+	if config1.EgressName != config2.EgressName {
+		return false
+	}
+
+	return true
+}
+
+// compareOptionalInt32 比较可选的int32指针
+func (em *Manager) compareOptionalInt32(a, b *int32) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// compareOptionalString 比较可选的string指针
+func (em *Manager) compareOptionalString(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// compareOptionalUint32 比较可选的uint32指针
+func (em *Manager) compareOptionalUint32(a, b *uint32) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// syncExistingProxiesOnStartup 启动时同步现有的proxy状态
+func (em *Manager) syncExistingProxiesOnStartup() {
+	defer em.wg.Done()
+
+	em.logger.Info("开始同步现有proxy状态")
+
+	// 扫描配置目录，查找现有的配置文件和PID文件
+	configDir := em.config.ConfigPath
+	if configDir == "" {
+		configDir = "/etc/nspass-agent" // 默认配置目录
+	}
+
+	// 检查配置目录是否存在
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		em.logger.WithField("config_dir", configDir).Debug("配置目录不存在，跳过状态同步")
+		return
+	}
+
+	// 读取配置目录中的文件
+	files, err := os.ReadDir(configDir)
+	if err != nil {
+		em.logger.WithError(err).WithField("config_dir", configDir).Error("读取配置目录失败")
+		return
+	}
+
+	orphanedFiles := make([]string, 0)
+	orphanedPIDs := make([]string, 0)
+
+	// 扫描孤立的配置文件和PID文件
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		fileName := file.Name()
+
+		// 检查是否是代理配置文件
+		if em.isProxyConfigFile(fileName) {
+			proxyID := em.extractProxyIDFromConfigFile(fileName)
+			if proxyID != "" {
+				em.mu.RLock()
+				_, exists := em.instances[proxyID]
+				em.mu.RUnlock()
+
+				if !exists {
+					orphanedFiles = append(orphanedFiles, filepath.Join(configDir, fileName))
+					em.logger.WithField("config_file", fileName).WithField("proxy_id", proxyID).
+						Debug("发现孤立的配置文件")
+				}
+			}
+		}
+
+		// 检查是否是PID文件
+		if em.isProxyPIDFile(fileName) {
+			proxyID := em.extractProxyIDFromPIDFile(fileName)
+			if proxyID != "" {
+				em.mu.RLock()
+				_, exists := em.instances[proxyID]
+				em.mu.RUnlock()
+
+				if !exists {
+					pidFilePath := filepath.Join(configDir, fileName)
+					// 检查PID文件对应的进程是否还在运行
+					if em.isProcessRunning(pidFilePath) {
+						em.logger.WithField("pid_file", fileName).WithField("proxy_id", proxyID).
+							Warn("发现孤立的运行中进程")
+						// 尝试停止孤立进程
+						em.stopOrphanedProcess(pidFilePath)
+					}
+					orphanedPIDs = append(orphanedPIDs, pidFilePath)
+				}
+			}
+		}
+	}
+
+	// 清理孤立的文件
+	em.cleanupOrphanedFiles(orphanedFiles, orphanedPIDs)
+
+	em.logger.WithField("orphaned_configs", len(orphanedFiles)).
+		WithField("orphaned_pids", len(orphanedPIDs)).
+		Info("proxy状态同步完成")
+}
+
+// isProxyConfigFile 检查是否是代理配置文件
+func (em *Manager) isProxyConfigFile(fileName string) bool {
+	// 匹配格式：shadowsocks-123.json, trojan-456.json, snell-789.json
+	matched, _ := regexp.MatchString(`^(shadowsocks|trojan|snell)-\d+\.(json|conf)$`, fileName)
+	return matched
+}
+
+// extractProxyIDFromConfigFile 从配置文件名提取代理ID
+func (em *Manager) extractProxyIDFromConfigFile(fileName string) string {
+	// 使用正则表达式提取ID
+	re := regexp.MustCompile(`^(shadowsocks|trojan|snell)-(\d+)\.(json|conf)$`)
+	matches := re.FindStringSubmatch(fileName)
+	if len(matches) >= 3 {
+		return matches[2] // 返回ID部分
+	}
+	return ""
+}
+
+// isProxyPIDFile 检查是否是代理PID文件
+func (em *Manager) isProxyPIDFile(fileName string) bool {
+	// 匹配格式：shadowsocks-123.pid, trojan-456.pid, snell-789.pid
+	matched, _ := regexp.MatchString(`^(shadowsocks|trojan|snell)-\d+\.pid$`, fileName)
+	return matched
+}
+
+// extractProxyIDFromPIDFile 从PID文件名提取代理ID
+func (em *Manager) extractProxyIDFromPIDFile(fileName string) string {
+	// 使用正则表达式提取ID
+	re := regexp.MustCompile(`^(shadowsocks|trojan|snell)-(\d+)\.pid$`)
+	matches := re.FindStringSubmatch(fileName)
+	if len(matches) >= 3 {
+		return matches[2] // 返回ID部分
+	}
+	return ""
+}
+
+// isProcessRunning 检查PID文件对应的进程是否在运行
+func (em *Manager) isProcessRunning(pidFilePath string) bool {
+	pidData, err := os.ReadFile(pidFilePath)
+	if err != nil {
+		return false
+	}
+
+	pidStr := strings.TrimSpace(string(pidData))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return false
+	}
+
+	// 使用kill(pid, 0)检查进程是否存在
+	err = syscall.Kill(pid, 0)
+	return err == nil
+}
+
+// stopOrphanedProcess 停止孤立进程
+func (em *Manager) stopOrphanedProcess(pidFilePath string) {
+	pidData, err := os.ReadFile(pidFilePath)
+	if err != nil {
+		return
+	}
+
+	pidStr := strings.TrimSpace(string(pidData))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		return
+	}
+
+	em.logger.WithField("pid", pid).Info("尝试停止孤立进程")
+
+	// 发送TERM信号
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		em.logger.WithError(err).WithField("pid", pid).Warn("停止孤立进程失败")
+		return
+	}
+
+	// 等待进程退出
+	time.Sleep(2 * time.Second)
+
+	// 检查进程是否还在运行
+	if err := syscall.Kill(pid, 0); err == nil {
+		// 进程仍在运行，发送KILL信号
+		em.logger.WithField("pid", pid).Warn("进程未响应TERM信号，发送KILL信号")
+		syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+// cleanupOrphanedFiles 清理孤立的文件
+func (em *Manager) cleanupOrphanedFiles(configFiles, pidFiles []string) {
+	// 清理配置文件
+	for _, configFile := range configFiles {
+		if err := os.Remove(configFile); err != nil {
+			em.logger.WithError(err).WithField("config_file", configFile).Warn("删除孤立配置文件失败")
+		} else {
+			em.logger.WithField("config_file", configFile).Info("已删除孤立配置文件")
+		}
+	}
+
+	// 清理PID文件
+	for _, pidFile := range pidFiles {
+		if err := os.Remove(pidFile); err != nil {
+			em.logger.WithError(err).WithField("pid_file", pidFile).Warn("删除孤立PID文件失败")
+		} else {
+			em.logger.WithField("pid_file", pidFile).Info("已删除孤立PID文件")
+		}
+	}
 }
 
 // updateStats 更新统计信息

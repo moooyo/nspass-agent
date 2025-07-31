@@ -245,3 +245,52 @@ func (s *Shadowsocks) IsInstalled() bool {
 func (s *Shadowsocks) IsRunning() bool {
 	return s.processManager.IsRunning()
 }
+
+// Cleanup 清理配置文件和PID文件
+func (s *Shadowsocks) Cleanup() error {
+	log := logging.GetProxyLogger().WithField("proxy_type", "shadowsocks")
+	log.Debug("开始清理shadowsocks配置文件和PID文件")
+
+	var errors []error
+
+	// 确保进程已停止
+	if s.IsRunning() {
+		if err := s.Stop(); err != nil {
+			log.WithError(err).Warn("停止进程失败，继续清理文件")
+			errors = append(errors, fmt.Errorf("停止进程失败: %w", err))
+		}
+	}
+
+	// 删除配置文件
+	if _, err := os.Stat(s.configPath); err == nil {
+		if err := os.Remove(s.configPath); err != nil {
+			log.WithError(err).WithField("config_path", s.configPath).Error("删除配置文件失败")
+			errors = append(errors, fmt.Errorf("删除配置文件失败: %w", err))
+		} else {
+			log.WithField("config_path", s.configPath).Info("配置文件已删除")
+		}
+	}
+
+	// 删除PID文件（通过进程管理器）
+	if err := s.processManager.RemovePIDFile(); err != nil {
+		log.WithError(err).Error("删除PID文件失败")
+		errors = append(errors, fmt.Errorf("删除PID文件失败: %w", err))
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("清理过程中发生错误: %v", errors)
+	}
+
+	log.Info("shadowsocks清理完成")
+	return nil
+}
+
+// GetConfigPath 获取配置文件路径
+func (s *Shadowsocks) GetConfigPath() string {
+	return s.configPath
+}
+
+// GetPIDPath 获取PID文件路径
+func (s *Shadowsocks) GetPIDPath() string {
+	return s.processManager.GetPIDFile()
+}
