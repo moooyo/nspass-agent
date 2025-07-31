@@ -124,8 +124,8 @@ func (m *Manager) UpdateRulesFromProto(configs []*model.IptablesConfig) error {
 		}
 
 		// 调试：输出proto配置的详细信息
-		fmt.Fprintf(os.Stderr, "[DEBUG] Proto配置 ID=%d, RuleAction='%s', Protocol='%s'\n",
-			config.Id, config.RuleAction, config.Protocol)
+		fmt.Fprintf(os.Stderr, "[DEBUG] Proto配置 ID=%d, RuleAction='%s', Protocol=%d\n",
+			config.Id, config.RuleAction, int32(config.Protocol))
 
 		// 转换proto配置为规则参数
 		table, chain, ruleText := m.convertProtoConfigToRuleParts(config)
@@ -727,37 +727,34 @@ func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (t
 	var ruleParts []string
 
 	// 验证和添加协议
-	if config.Protocol != "" && config.Protocol != "all" {
-		fmt.Fprintf(os.Stderr, "[DEBUG] 协议: '%s'\n", config.Protocol)
+	var protocolAdded bool
+	var protocolStr string
 
-		// 验证协议是否有效
-		validProtocols := map[string]bool{
-			"tcp": true, "udp": true, "icmp": true, "all": true,
-			"TCP": true, "UDP": true, "ICMP": true, "ALL": true,
-		}
+	// 将枚举转换为字符串
+	switch config.Protocol {
+	case model.IptablesProtocol_IPTABLES_PROTOCOL_TCP:
+		protocolStr = "tcp"
+		protocolAdded = true
+	case model.IptablesProtocol_IPTABLES_PROTOCOL_UDP:
+		protocolStr = "udp"
+		protocolAdded = true
+	case model.IptablesProtocol_IPTABLES_PROTOCOL_ICMP:
+		protocolStr = "icmp"
+		protocolAdded = true
+	case model.IptablesProtocol_IPTABLES_PROTOCOL_ALL:
+		protocolStr = "all"
+		// all协议不需要添加-p参数
+	case model.IptablesProtocol_IPTABLES_PROTOCOL_UNSPECIFIED:
+		// 未指定协议，不添加-p参数
+	default:
+		fmt.Fprintf(os.Stderr, "[ERROR] 未知的协议枚举值: %d, 配置ID: %d\n", int32(config.Protocol), config.Id)
+	}
 
-		// 检查协议是否是数字（可能的错误）
-		if config.Protocol == "1" || config.Protocol == "2" || config.Protocol == "3" || config.Protocol == "4" {
-			fmt.Fprintf(os.Stderr, "[ERROR] 协议是数字: '%s', 这可能是proto枚举值错误！配置ID: %d\n", config.Protocol, config.Id)
-			// 尝试转换数字到协议名
-			switch config.Protocol {
-			case "1":
-				config.Protocol = "tcp"
-			case "2":
-				config.Protocol = "udp"
-			case "3":
-				config.Protocol = "icmp"
-			case "4":
-				config.Protocol = "all"
-			}
-			fmt.Fprintf(os.Stderr, "[INFO] 自动转换协议为: '%s'\n", config.Protocol)
-		}
+	fmt.Fprintf(os.Stderr, "[DEBUG] 协议枚举: %d, 转换为字符串: '%s'\n", int32(config.Protocol), protocolStr)
 
-		if validProtocols[config.Protocol] {
-			ruleParts = append(ruleParts, "-p", strings.ToLower(config.Protocol))
-		} else {
-			fmt.Fprintf(os.Stderr, "[ERROR] 无效的协议: '%s', 配置ID: %d\n", config.Protocol, config.Id)
-		}
+	// 添加协议参数
+	if protocolAdded {
+		ruleParts = append(ruleParts, "-p", protocolStr)
 	}
 
 	// 添加源IP
@@ -770,16 +767,26 @@ func (m *Manager) convertProtoConfigToRuleParts(config *model.IptablesConfig) (t
 		ruleParts = append(ruleParts, "-d", *config.DestIp)
 	}
 
-	// 添加源端口
+	// 添加源端口（只有在协议是TCP或UDP时才有效）
 	if config.SourcePort != nil && *config.SourcePort != "" {
 		fmt.Fprintf(os.Stderr, "[DEBUG] 源端口: '%s'\n", *config.SourcePort)
-		ruleParts = append(ruleParts, "--sport", *config.SourcePort)
+		if protocolAdded && (protocolStr == "tcp" || protocolStr == "udp") {
+			ruleParts = append(ruleParts, "--sport", *config.SourcePort)
+		} else {
+			fmt.Fprintf(os.Stderr, "[WARN] 源端口 '%s' 被忽略，因为协议不是TCP或UDP (协议: '%s'), 配置ID: %d\n",
+				*config.SourcePort, protocolStr, config.Id)
+		}
 	}
 
-	// 添加目标端口
+	// 添加目标端口（只有在协议是TCP或UDP时才有效）
 	if config.DestPort != nil && *config.DestPort != "" {
 		fmt.Fprintf(os.Stderr, "[DEBUG] 目标端口: '%s'\n", *config.DestPort)
-		ruleParts = append(ruleParts, "--dport", *config.DestPort)
+		if protocolAdded && (protocolStr == "tcp" || protocolStr == "udp") {
+			ruleParts = append(ruleParts, "--dport", *config.DestPort)
+		} else {
+			fmt.Fprintf(os.Stderr, "[WARN] 目标端口 '%s' 被忽略，因为协议不是TCP或UDP (协议: '%s'), 配置ID: %d\n",
+				*config.DestPort, protocolStr, config.Id)
+		}
 	}
 
 	// 添加网络接口

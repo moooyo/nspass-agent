@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # NSPass Agent 安装/升级脚本
-# 使用方法: 
+# 功能说明:
+#   - 全新安装: 如果系统中未检测到NSPass Agent，将执行全新安装
+#   - 升级安装: 如果检测到已安装的NSPass Agent，将自动备份配置文件，下载最新版本，并保留原有配置
+#
+# 使用方法:
 #   curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash
 #   或
 #   curl -sSL https://raw.githubusercontent.com/moooyo/nspass-agent/main/scripts/install.sh | bash -s -- --server-id=your-server-id --token=your-token --base-url=https://api.nspass.com
@@ -69,6 +73,10 @@ SERVER_ID=""
 API_TOKEN=""
 API_BASE_URL=""
 ENV_PRESET=""
+
+# 升级相关变量
+EXISTING_INSTALLATION=false
+BACKUP_CONFIG_DIR=""
 
 # 预设环境 API 地址
 PRESET_URLS=(
@@ -412,17 +420,128 @@ version_compare() {
     fi
 }
 
+# 检查是否已安装
+check_existing_installation() {
+    print_step "检查现有安装..."
+
+    local found=false
+
+    # 检查二进制文件
+    if [ -f "$INSTALL_DIR/nspass-agent" ]; then
+        local version=$("$INSTALL_DIR/nspass-agent" --version 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+        print_info "发现已安装的二进制文件: $INSTALL_DIR/nspass-agent (版本: $version)"
+        found=true
+    fi
+
+    # 检查systemd服务
+    if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
+        print_info "发现systemd服务文件: /etc/systemd/system/$SERVICE_NAME.service"
+        found=true
+    fi
+
+    # 检查配置目录
+    if [ -d "$CONFIG_DIR" ]; then
+        print_info "发现配置目录: $CONFIG_DIR"
+        found=true
+    fi
+
+    if [ "$found" = true ]; then
+        EXISTING_INSTALLATION=true
+        print_info "检测到现有安装，将执行升级流程"
+    else
+        EXISTING_INSTALLATION=false
+        print_info "未检测到现有安装，将执行全新安装"
+    fi
+}
+
+# 备份现有配置
+backup_existing_config() {
+    if [ "$EXISTING_INSTALLATION" = false ]; then
+        return 0
+    fi
+
+    print_step "备份现有配置..."
+
+    # 创建备份目录
+    local backup_timestamp=$(date +%Y%m%d_%H%M%S)
+    BACKUP_CONFIG_DIR="/tmp/nspass-config-backup-$backup_timestamp"
+    mkdir -p "$BACKUP_CONFIG_DIR"
+
+    # 备份配置文件
+    if [ -d "$CONFIG_DIR" ]; then
+        cp -r "$CONFIG_DIR" "$BACKUP_CONFIG_DIR/"
+        print_info "已备份配置目录到: $BACKUP_CONFIG_DIR"
+    fi
+
+    # 备份systemd服务文件
+    if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
+        cp "/etc/systemd/system/$SERVICE_NAME.service" "$BACKUP_CONFIG_DIR/"
+        print_info "已备份systemd服务文件"
+    fi
+
+    # 创建备份信息文件
+    cat > "$BACKUP_CONFIG_DIR/backup_info.txt" << EOF
+备份时间: $(date)
+备份原因: 升级安装
+当前版本: $CURRENT_VERSION
+目标版本: $LATEST_VERSION
+主机名: $(hostname)
+系统: $(uname -a)
+EOF
+
+    print_info "配置备份完成: $BACKUP_CONFIG_DIR"
+}
+
+# 恢复配置文件
+restore_config_files() {
+    if [ "$EXISTING_INSTALLATION" = false ] || [ -z "$BACKUP_CONFIG_DIR" ] || [ ! -d "$BACKUP_CONFIG_DIR" ]; then
+        return 0
+    fi
+
+    print_step "恢复配置文件..."
+
+    # 恢复配置目录中的文件，但不覆盖新创建的默认配置
+    if [ -d "$BACKUP_CONFIG_DIR/nspass" ]; then
+        # 恢复config.yaml（如果存在）
+        if [ -f "$BACKUP_CONFIG_DIR/nspass/config.yaml" ]; then
+            cp "$BACKUP_CONFIG_DIR/nspass/config.yaml" "$CONFIG_DIR/config.yaml"
+            print_info "已恢复配置文件: config.yaml"
+        fi
+
+        # 恢复proxy目录
+        if [ -d "$BACKUP_CONFIG_DIR/nspass/proxy" ]; then
+            cp -r "$BACKUP_CONFIG_DIR/nspass/proxy/"* "$CONFIG_DIR/proxy/" 2>/dev/null || true
+            print_info "已恢复代理配置目录"
+        fi
+
+        # 恢复iptables-backup目录
+        if [ -d "$BACKUP_CONFIG_DIR/nspass/iptables-backup" ]; then
+            cp -r "$BACKUP_CONFIG_DIR/nspass/iptables-backup/"* "$CONFIG_DIR/iptables-backup/" 2>/dev/null || true
+            print_info "已恢复iptables备份目录"
+        fi
+    fi
+
+    print_info "配置文件恢复完成"
+}
+
 # 检查是否需要更新
 check_update_needed() {
     get_current_version
     get_latest_version
-    
+
     if [ -z "$CURRENT_VERSION" ]; then
         print_info "执行全新安装..."
         UPDATE_NEEDED=true
         return
     fi
-    
+
+    # 如果检测到现有安装，总是执行升级流程（即使版本相同）
+    if [ "$EXISTING_INSTALLATION" = true ]; then
+        print_info "检测到现有安装，执行升级流程 ($CURRENT_VERSION -> $LATEST_VERSION)"
+        UPDATE_NEEDED=true
+        return
+    fi
+
     version_compare "$CURRENT_VERSION" "$LATEST_VERSION"
     case $? in
         0)
@@ -1517,7 +1636,19 @@ main() {
         print_warn "  wget: 未安装"
     fi
     echo ""
-    
+
+    # 检查现有安装
+    debug_log "开始检查现有安装"
+    check_existing_installation
+    debug_log "现有安装检查完成: EXISTING_INSTALLATION=$EXISTING_INSTALLATION"
+
+    # 备份现有配置（如果存在）
+    if [ "$EXISTING_INSTALLATION" = true ]; then
+        debug_log "开始备份现有配置"
+        backup_existing_config
+        debug_log "配置备份完成"
+    fi
+
     # 检查是否需要更新
     debug_log "开始检查更新需求"
     check_update_needed
@@ -1561,7 +1692,14 @@ main() {
     
     setup_config
     debug_log "配置设置完成"
-    
+
+    # 恢复配置文件（如果是升级）
+    if [ "$EXISTING_INSTALLATION" = true ]; then
+        debug_log "开始恢复配置文件"
+        restore_config_files
+        debug_log "配置文件恢复完成"
+    fi
+
     install_systemd_service
     debug_log "systemd服务安装完成"
     
@@ -1573,7 +1711,19 @@ main() {
     if check_service_status; then
         debug_log "服务状态检查通过"
         show_post_install_info
-        print_info "安装成功完成！"
+
+        # 清理备份目录（升级成功后）
+        if [ "$EXISTING_INSTALLATION" = true ] && [ -n "$BACKUP_CONFIG_DIR" ] && [ -d "$BACKUP_CONFIG_DIR" ]; then
+            print_info "清理临时备份目录..."
+            rm -rf "$BACKUP_CONFIG_DIR"
+            debug_log "备份目录清理完成"
+        fi
+
+        if [ "$EXISTING_INSTALLATION" = true ]; then
+            print_info "升级成功完成！"
+        else
+            print_info "安装成功完成！"
+        fi
     else
         print_error "安装完成但服务启动异常"
         print_error "请检查以下内容："
